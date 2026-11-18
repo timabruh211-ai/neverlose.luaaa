@@ -1,0 +1,1087 @@
+--[[
+	NEBULA v3 — Settings Suite (Roblox Luau, исправлено)
+	LocalScript → StarterPlayer → StarterPlayerScripts
+	PC + Mobile: drag мышью/пальцем, drawer-сайдбар, кнопка «Открыть меню».
+	Опционально: RemoteEvent "NebulaSave" в ReplicatedStorage.
+]]
+
+local Players=game:GetService("Players")
+local TweenService=game:GetService("TweenService")
+local UserInputService=game:GetService("UserInputService")
+local RunService=game:GetService("RunService")
+local HttpService=game:GetService("HttpService")
+local SoundService=game:GetService("SoundService")
+local ReplicatedStorage=game:GetService("ReplicatedStorage")
+
+local player=Players.LocalPlayer
+local playerGui=player:WaitForChild("PlayerGui")
+local camera=workspace.CurrentCamera
+local remote=ReplicatedStorage:FindFirstChild("NebulaSave")
+
+local THEMES={
+	midnight={side=Color3.fromRGB(13,16,23),main=Color3.fromRGB(17,20,29),card=Color3.fromRGB(22,26,38),line=Color3.fromRGB(34,40,58),muted=Color3.fromRGB(142,150,170),label=Color3.fromRGB(215,219,231)},
+	abyss={side=Color3.fromRGB(9,12,18),main=Color3.fromRGB(12,15,22),card=Color3.fromRGB(16,20,29),line=Color3.fromRGB(27,33,48),muted=Color3.fromRGB(130,138,158),label=Color3.fromRGB(205,210,224)},
+	contrast={side=Color3.fromRGB(13,16,23),main=Color3.fromRGB(17,20,29),card=Color3.fromRGB(24,29,43),line=Color3.fromRGB(48,58,85),muted=Color3.fromRGB(169,177,198),label=Color3.fromRGB(232,235,244)},
+}
+local SEM={ok=Color3.fromRGB(34,197,94),warn=Color3.fromRGB(245,158,11),err=Color3.fromRGB(239,68,68),info=Color3.fromRGB(0,149,255),violet=Color3.fromRGB(139,92,246),white=Color3.new(1,1,1)}
+local PRESETS={"#3B82F6","#0095FF","#8B5CF6","#22C55E","#F59E0B","#EF4444"}
+local BASE_W,BASE_H,HEADER_H=1060,680,56
+
+local DEFAULTS={
+	language="ru",accent="#3B82F6",glow=true,borderGlow=true,theme="midnight",radius=8,density="normal",compact=false,
+	aurora=true,grid=true,particles=true,particleCount=90,particleGlow=true,driftSpeed=60,reduceMotion=false,
+	uiScale=100,shadowDepth=70,frosted=true,animations=true,name=player.DisplayName,status="online",showProfile=true,
+	drag=true,hotkeys=true,closeAction="hide",rememberPos=true,startMin=false,checkUpdates=false,updChannel="stable",updPre=false,autoSave=false,
+	quality="high",fpsCap=60,pauseUnfocused=true,
+	notifEnabled=true,notifPos="br",notifDuration=4,notifStack=true,notifMax=3,notifHover=true,notifSuccess=true,notifInfo=true,notifWarning=true,notifError=true,
+	sound=true,telemetry=false,posX=0,posY=0,benchResult="—",
+}
+local state={}
+for k,v in pairs(DEFAULTS) do state[k]=v end
+
+local function pal() return THEMES[state.theme] or THEMES.midnight end
+local function hexToColor(h)
+	h=tostring(h):gsub("#","")
+	if #h~=6 then return Color3.fromRGB(59,130,246) end
+	local n=tonumber(h,16) or 0
+	return Color3.fromRGB(math.floor(n/65536)%256,math.floor(n/256)%256,n%256)
+end
+local function colorToHex(c)
+	local function ch(v) return string.format("%02X",math.clamp(math.floor(v*255+.5),0,255)) end
+	return "#"..ch(c.R)..ch(c.G)..ch(c.B)
+end
+local function accent() return hexToColor(state.accent) end
+local function mix(a,b,t) return a:Lerp(b,t) end
+local function lighten(c,f) return mix(c,Color3.new(1,1,1),f) end
+local function rowH() return ({compact=34,normal=42,roomy=50})[state.density] or 42 end
+local function utf8len(s) if utf8 and utf8.len then return utf8.len(s) or #s end return #s end
+local atan2=math.atan2 or function(y,x) return math.atan(y,x) end
+
+local function new(cls,props,parent)
+	local o=Instance.new(cls)
+	for k,v in pairs(props or {}) do o[k]=v end
+	o.Parent=parent
+	return o
+end
+local function corner(o,r) return new("UICorner",{CornerRadius=UDim.new(0,r or 8)},o) end
+local function pill(o) return new("UICorner",{CornerRadius=UDim.new(1,0)},o) end
+local function stroke(o,th) return new("UIStroke",{Thickness=th or 1,ApplyStrokeMode=Enum.ApplyStrokeMode.Border},o) end
+local function pad(o,l,r,t,b) return new("UIPadding",{PaddingLeft=UDim.new(0,l or 0),PaddingRight=UDim.new(0,r or 0),PaddingTop=UDim.new(0,t or 0),PaddingBottom=UDim.new(0,b or 0)},o) end
+local function list(o,dir,gap) return new("UIListLayout",{FillDirection=dir or Enum.FillDirection.Vertical,Padding=UDim.new(0,gap or 6),SortOrder=Enum.SortOrder.LayoutOrder},o) end
+local function clearGui(p) for _,c in ipairs(p:GetChildren()) do if c:IsA("GuiObject") then c:Destroy() end end end
+local function tw(o,props,time)
+	local dur=state.animations and (time or .22) or .001
+	local t=TweenService:Create(o,TweenInfo.new(dur,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),props)
+	t:Play(); return t
+end
+local function makeGroup(props,parent)
+	local ok,g=pcall(function() return Instance.new("CanvasGroup") end)
+	if not ok then g=Instance.new("Frame") end
+	for k,v in pairs(props or {}) do if not (k=="GroupTransparency" and not g:IsA("CanvasGroup")) then g[k]=v end end
+	g.Parent=parent
+	return g
+end
+local function fadeGroup(g,to,time)
+	if g:IsA("CanvasGroup") then tw(g,{GroupTransparency=to},time) else tw(g,{BackgroundTransparency=to},time) end
+end
+
+local CHROME={
+	ru={save="Save",saved="Готово",openMenu="Открыть меню",groupMain="Основное",groupSystem="Система",params="парам.",ok="OK",apply="Применить",confirmReset="Подтвердить сброс?",colorPicker="Свой цвет",ready="Готово",
+		docs="Документация",docsBody1="NEBULA v3 — интерфейс настроек. Все тумблеры, списки, ползунки и цвет применяются мгновенно.",docsBody2="Перетаскивайте окно за верхнюю панель мышью или пальцем. Крестик скрывает окно — вернуть можно кнопкой «Открыть меню». На телефоне сайдбар выезжает по ≡.",
+		hotkeysTitle="Горячие клавиши",hotkeysBody="M — показать/скрыть · Ctrl+S — сохранить · Esc — закрыть всплывающее окно",
+		exportTitle="Экспорт конфигурации",exportHint="Выделите текст (Ctrl+A) и скопируйте (Ctrl+C). Если есть RemoteEvent NebulaSave — конфиг уйдёт на сервер.",importTitle="Импорт конфигурации",importHint="Вставьте JSON и нажмите «Применить».",sendServer="Отправить на сервер",sentServer="Конфиг отправлен на сервер.",
+		savedTitle="Конфигурация сохранена",savedMsg="Параметры записаны в атрибут ScreenGui этой сессии.",resetTitle="Настройки сброшены",resetMsg="Восстановлены значения по умолчанию.",clearTitle="Хранилище очищено",clearMsg="Сохранённая конфигурация удалена.",
+		importOk="Конфиг импортирован",importOkMsg="Параметры применены из JSON.",importErr="Ошибка импорта",importErrMsg="Текст не является корректным конфигом NEBULA.",randomTitle="Случайный стиль",randomMsg="Акцент, тема, скругление и плотность перемешаны.",
+		updateTitle="Проверка обновлений",updateMsg="Поиск новой версии…",latestTitle="У вас последняя версия",latestMsg="NEBULA v3.0.2 — актуальный билд.",benchTitle="Тест завершён",benchMsg="Средняя частота кадров сцены: ",testTitle="Тестовое уведомление",testMsg="Так выглядит оповещение этого типа.",
+		welcome="Меню загружено. M — скрыть/показать, ≡ — сайдбар на телефоне.",tip="Совет",licenseVal="MIT · демо",styleVal="Тёмный неоновый концепт",changelog="Что нового",changelogBody="3.0.2 — перенос на Luau: векторные иконки, живой цветовой пикер, сцена с авророй и частицами, перетаскивание пальцем, выдвижной сайдбар, тосты, экспорт/импорт JSON.",syncLocal="локально",syncRemote="RemoteEvent"},
+	en={save="Save",saved="Saved",openMenu="Open menu",groupMain="General",groupSystem="System",params="params",ok="OK",apply="Apply",confirmReset="Confirm reset?",colorPicker="Custom color",ready="Done",
+		docs="Documentation",docsBody1="NEBULA v3 is a settings interface. Every toggle, combo, slider and color applies instantly.",docsBody2="Drag the window by its top bar with mouse or finger. The cross hides it — bring it back with the Open menu pill. On phones the sidebar slides in via ≡.",
+		hotkeysTitle="Hotkeys",hotkeysBody="M — show/hide · Ctrl+S — save · Esc — close popovers",
+		exportTitle="Export configuration",exportHint="Select all (Ctrl+A) and copy (Ctrl+C). If NebulaSave RemoteEvent exists, config is sent to server.",importTitle="Import configuration",importHint="Paste JSON and press Apply.",sendServer="Send to server",sentServer="Config sent to server.",
+		savedTitle="Configuration saved",savedMsg="Parameters written to this session's ScreenGui attribute.",resetTitle="Settings reset",resetMsg="Defaults restored.",clearTitle="Storage cleared",clearMsg="Saved configuration removed.",
+		importOk="Config imported",importOkMsg="Parameters applied from JSON.",importErr="Import failed",importErrMsg="Text is not a valid NEBULA config.",randomTitle="Random style",randomMsg="Accent, theme, radius and density shuffled.",
+		updateTitle="Checking updates",updateMsg="Looking for a new version…",latestTitle="You are up to date",latestMsg="NEBULA v3.0.2 is the latest build.",benchTitle="Benchmark complete",benchMsg="Average scene frame rate: ",testTitle="Test notification",testMsg="This is how this alert type looks.",
+		welcome="Menu loaded. M — hide/show, ≡ — sidebar on phone.",tip="Tip",licenseVal="MIT · demo",styleVal="Dark neon concept",changelog="What's new",changelogBody="3.0.2 — Luau port: vector icons, live color picker, aurora + particle scene, touch dragging, drawer sidebar, toasts, JSON export/import.",syncLocal="local",syncRemote="RemoteEvent"},
+}
+local function t(k) local d=CHROME[state.language] or CHROME.ru; return d[k] or CHROME.ru[k] or k end
+local function L(ru,en) return {ru=ru,en=en} end
+local function lab(x) if type(x)=="table" then return x[state.language] or x.ru end return tostring(x) end
+
+local tints,radii,liveInfo={},{},{}
+local function modeColor(m)
+	local p,a=pal(),accent()
+	if m=="accent" then return a elseif m=="accent2" then return lighten(a,.3)
+	elseif m=="soft" then return mix(a,p.card,.84) elseif m=="softSide" then return mix(a,p.side,.82)
+	elseif m=="line" then return p.line elseif m=="muted" then return p.muted elseif m=="label" then return p.label
+	elseif m=="card" then return p.card elseif m=="side" then return p.side elseif m=="main" then return p.main
+	elseif m=="dim" then return mix(p.muted,p.side,.45) elseif m=="input" then return mix(p.card,p.side,.35)
+	elseif m=="track" then return mix(p.line,p.side,.3) elseif m=="off" then return mix(p.line,p.side,.15)
+	elseif SEM[m] then return SEM[m] end
+	return p.label
+end
+local function tint(o,prop,m)
+	table.insert(tints,{o=o,p=prop,m=m})
+	if m=="gradAccent" then o.Color=ColorSequence.new(accent(),SEM.violet)
+	elseif m=="gradAurora" then o.Color=ColorSequence.new(mix(accent(),SEM.info,.4),SEM.violet)
+	else o[prop]=modeColor(m) end
+	return o
+end
+local function paint()
+	local a=accent()
+	for i=#tints,1,-1 do
+		local e=tints[i]
+		if e.o.Parent==nil then table.remove(tints,i)
+		elseif e.dyn then e.o[e.p]=e.dyn()
+		elseif e.m=="gradAccent" then e.o.Color=ColorSequence.new(a,SEM.violet)
+		elseif e.m=="gradAurora" then e.o.Color=ColorSequence.new(mix(a,SEM.info,.4),SEM.violet)
+		else e.o[e.p]=modeColor(e.m) end
+	end
+end
+local function regRadius(u) table.insert(radii,u); u.CornerRadius=UDim.new(0,state.radius); return u end
+local function applyRadius()
+	for i=#radii,1,-1 do local u=radii[i]; if u.Parent==nil then table.remove(radii,i) else u.CornerRadius=UDim.new(0,state.radius) end end
+end
+
+local ICONS={
+	sliders={{"l",5,3,5,21},{"l",12,3,12,21},{"l",19,3,19,21},{"l",2,9,8,9,3},{"l",9,15,15,15,3},{"l",16,7,22,7,3}},
+	palette={{"c",12,12,9,false},{"c",8,10,1.1,true},{"c",11,7.4,1.1,true},{"c",15,9,1.1,true},{"l",12,21,16,18}},
+	cpu={{"r",6,6,12,12,2,false},{"r",10,10,4,4,1,false},{"l",9,2,9,6},{"l",15,2,15,6},{"l",9,18,9,22},{"l",15,18,15,22},{"l",2,9,6,9},{"l",2,15,6,15},{"l",18,9,22,9},{"l",18,15,22,15}},
+	bell={{"r",6,3,12,13,6,false},{"l",4,19,20,19},{"l",10,21,14,21},{"l",6,16,4,19},{"l",18,16,20,19}},
+	info={{"c",12,12,9,false},{"l",12,11,12,16},{"c",12,7.8,1,true}},
+	user={{"c",12,8,4,false},{"l",4,21,7,16},{"l",7,16,17,16},{"l",17,16,20,21}},
+	power={{"c",12,13,8,false},{"l",12,2,12,12,3}},
+	mouse={{"r",8,2,8,20,4,false},{"l",12,6,12,10}},
+	database={{"r",4,4,16,16,8,false},{"l",4,9,20,9},{"l",4,14,20,14}},
+	shield={{"l",12,2,20,6},{"l",20,6,20,12},{"l",20,12,12,22},{"l",12,22,4,12},{"l",4,12,4,6},{"l",4,6,12,2}},
+	sparkles={{"l",12,3,17,10},{"l",17,10,12,17},{"l",12,17,7,10},{"l",7,10,12,3},{"l",19,2,19,6},{"l",17,4,21,4}},
+	moon={{"l",16,4,11,6},{"l",11,6,8,11},{"l",8,11,9,16},{"l",9,16,13,20},{"l",13,20,18,20}},
+	image={{"r",3,3,18,18,2,false},{"c",8.5,8.5,1.8,true},{"l",21,15,15,10},{"l",15,10,5,20}},
+	monitor={{"r",2,4,20,13,2,false},{"l",8,21,16,21},{"l",12,17,12,21}},
+	zap={{"l",13,2,4,14},{"l",4,14,11,14},{"l",11,14,10,22},{"l",10,22,20,10},{"l",20,10,13,10},{"l",13,10,13,2}},
+	activity={{"l",2,12,6,12},{"l",6,12,9,4},{"l",9,4,14,20},{"l",14,20,17,12},{"l",17,12,22,12}},
+	gauge={{"l",3,17,5,10},{"l",5,10,10,5},{"l",10,5,15,5},{"l",15,5,20,10},{"l",20,10,22,17},{"l",12,16,16,10},{"c",12,16,1.4,true}},
+	terminal={{"r",2,4,20,16,2,false},{"l",6,9,9,12},{"l",9,12,6,15},{"l",12,15,18,15}},
+	clock={{"c",12,12,9,false},{"l",12,7,12,12},{"l",12,12,15,14}},
+	filter={{"l",3,4,21,4},{"l",21,4,14,12},{"l",14,12,14,20},{"l",14,20,10,18},{"l",10,18,10,12},{"l",10,12,3,4}},
+	send={{"l",22,2,11,13},{"l",22,2,15,22},{"l",15,22,11,13},{"l",11,13,2,9},{"l",2,9,22,2}},
+	pen={{"l",12,20,21,20},{"l",16,4,20,8},{"l",20,8,8,20},{"l",8,20,4,21},{"l",4,21,5,17},{"l",5,17,16,4}},
+	code={{"l",16,18,22,12},{"l",22,12,16,6},{"l",8,6,2,12},{"l",2,12,8,18}},
+	download={{"l",12,3,12,15},{"l",7,10,12,15},{"l",12,15,17,10},{"l",4,19,20,19}},
+	upload={{"l",12,15,12,3},{"l",7,8,12,3},{"l",12,3,17,8},{"l",4,19,20,19}},
+	gear={{"c",12,12,3.2,false},{"l",12,3,12,6},{"l",12,18,12,21},{"l",3,12,6,12},{"l",18,12,21,12},{"l",5.6,5.6,7.8,7.8},{"l",16.2,16.2,18.4,18.4},{"l",18.4,5.6,16.2,7.8},{"l",7.8,16.2,5.6,18.4}},
+	chevron={{"l",6,9,12,15},{"l",12,15,18,9}},
+	check={{"l",5,13,10,18},{"l",10,18,19,6}},
+	x={{"l",6,6,18,18},{"l",18,6,6,18}},
+	minus={{"l",5,12,19,12}},
+	menu={{"l",3,6,21,6},{"l",3,12,21,12},{"l",3,18,21,18}},
+	refresh={{"l",20,7,15,4},{"l",15,4,9,5},{"l",9,5,5,10},{"l",5,10,5,13},{"l",4,17,9,20},{"l",9,20,15,19},{"l",15,19,19,14},{"l",19,14,19,11},{"l",20,3,20,7},{"l",20,7,16,7},{"l",4,21,4,17},{"l",4,17,8,17}},
+	trash={{"l",3,6,21,6},{"l",8,6,8,3},{"l",8,3,16,3},{"l",16,3,16,6},{"l",5,6,6,21},{"l",6,21,18,21},{"l",18,21,19,6},{"l",10,10,10,17},{"l",14,10,14,17}},
+	dice={{"r",3,3,18,18,3,false},{"c",8.5,8.5,1.3,true},{"c",15.5,15.5,1.3,true},{"c",12,12,1.3,true}},
+	book={{"l",4,4,4,19},{"l",4,19,7,21},{"l",7,21,20,21},{"l",20,21,20,3},{"l",20,3,7,3},{"l",7,3,4,4},{"l",4,19,7,17},{"l",7,17,20,17}},
+	alert={{"l",12,3,22,20},{"l",22,20,2,20},{"l",2,20,12,3},{"l",12,9,12,14},{"c",12,17.4,1,true}},
+	eye={{"l",2,12,7,7},{"l",7,7,17,7},{"l",17,7,22,12},{"l",22,12,17,17},{"l",17,17,7,17},{"l",7,17,2,12},{"c",12,12,3,false}},
+	sound={{"l",4,9,4,15},{"l",4,15,8,15},{"l",8,15,13,20},{"l",13,20,13,4},{"l",13,4,8,9},{"l",8,9,4,9},{"l",16,9,18,12},{"l",18,12,16,15}},
+	mute={{"l",4,9,4,15},{"l",4,15,8,15},{"l",8,15,13,20},{"l",13,20,13,4},{"l",13,4,8,9},{"l",8,9,4,9},{"l",16,9,21,15},{"l",21,9,16,15}},
+	plus={{"l",12,5,12,19},{"l",5,12,19,12}},
+	save={{"r",3,3,18,18,2,false},{"r",7,3,10,6,1,false},{"r",7,13,10,8,1,false}},
+}
+local function icon(name,parent,size,mode)
+	local h=new("Frame",{Size=UDim2.fromOffset(size,size),BackgroundTransparency=1},parent)
+	local s=size/24
+	for _,p in ipairs(ICONS[name] or ICONS.info) do
+		local k=p[1]
+		if k=="l" then
+			local x1,y1,x2,y2=p[2]*s,p[3]*s,p[4]*s,p[5]*s
+			local th=math.max(1,(p[6] or 2)*s)
+			local dx,dy=x2-x1,y2-y1
+			local ln=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset((x1+x2)/2,(y1+y2)/2),Size=UDim2.fromOffset(math.max(1,math.sqrt(dx*dx+dy*dy)),th),Rotation=math.deg(atan2(dy,dx)),BorderSizePixel=0},h)
+			pill(ln); tint(ln,"BackgroundColor3",mode)
+		elseif k=="r" then
+			local fill=p[7]
+			local rc=new("Frame",{Position=UDim2.fromOffset(p[2]*s,p[3]*s),Size=UDim2.fromOffset(p[4]*s,p[5]*s),BorderSizePixel=0,BackgroundTransparency=fill and 0 or 1},h)
+			corner(rc,(p[6] or 2)*s)
+			if fill then tint(rc,"BackgroundColor3",mode) else tint(stroke(rc,math.max(1,2*s)),"Color",mode) end
+		elseif k=="c" then
+			local fill=p[5]; local r=p[4]*s
+			local cc=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset(p[2]*s,p[3]*s),Size=UDim2.fromOffset(r*2,r*2),BorderSizePixel=0,BackgroundTransparency=fill and 0 or 1},h)
+			pill(cc)
+			if fill then tint(cc,"BackgroundColor3",mode) else tint(stroke(cc,math.max(1,2*s)),"Color",mode) end
+		end
+	end
+	return h
+end
+
+local old=playerGui:FindFirstChild("NebulaV3"); if old then old:Destroy() end
+local gui=new("ScreenGui",{Name="NebulaV3",ResetOnSpawn=false,IgnoreGuiInset=true,ZIndexBehavior=Enum.ZIndexBehavior.Sibling,DisplayOrder=25},playerGui)
+
+local uiSound=new("Sound",{SoundId="rbxasset://sounds/electronicpingshort.wav",Volume=.14},SoundService)
+local function playSound(kind)
+	if not state.sound then return end
+	local ok,s=pcall(function() return uiSound:Clone() end)
+	if not ok or not s then return end
+	s.Volume=(kind=="click") and .07 or .14
+	s.PlaybackSpeed=({success=1.45,info=1.1,warning=.85,error=.6,click=1.9})[kind] or 1
+	if SoundService.PlayLocalSound then pcall(function() SoundService:PlayLocalSound(s) end) else pcall(function() s:Play() end) end
+	task.delay(1.2,function() if s then s:Destroy() end end)
+end
+
+local scene=new("Frame",{Name="Scene",Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(5,7,12),BorderSizePixel=0,ZIndex=1},gui)
+local auroraLayer=new("Frame",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1},scene)
+local gridLayer=new("Frame",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1},scene)
+local partLayer=new("Frame",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1},scene)
+local blobs={}
+for i,cfg in ipairs({{w=.62,x=-.16,y=-.24},{w=.48,x=.68,y=.04},{w=.52,x=.22,y=.62}}) do
+	local root=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Size=UDim2.fromScale(cfg.w,cfg.w),BackgroundTransparency=1},auroraLayer)
+	for ring=1,4 do
+		local f=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromScale(1-ring*.17,1-ring*.17),BackgroundTransparency=1-ring*.16,BorderSizePixel=0},root)
+		pill(f); tint(f,"BackgroundColor3",i==2 and "violet" or (i==3 and "info" or "accent"))
+		tint(new("UIGradient",{Rotation=i*40},f),"Color","gradAurora")
+	end
+	table.insert(blobs,{root=root,cfg=cfg,phase=i*2.1})
+end
+for _,cfg in ipairs({{p=UDim2.new(0,0,0,0),s=UDim2.new(1,0,0,140),r=90},{p=UDim2.new(0,0,1,-140),s=UDim2.new(1,0,0,140),r=-90},{p=UDim2.new(0,0,0,0),s=UDim2.new(0,150,1,0),r=0},{p=UDim2.new(1,-150,0,0),s=UDim2.new(0,150,1,0),r=180}}) do
+	local f=new("Frame",{Position=cfg.p,Size=cfg.s,BackgroundColor3=Color3.new(0,0,0),BorderSizePixel=0},scene)
+	new("UIGradient",{Rotation=cfg.r,Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.35),NumberSequenceKeypoint.new(1,1)})},f)
+end
+local SCENE={pool={},live=0,fps=60,frameMs=16.7,focused=true,last=0,t=0,benchUntil=0,benchFrames=0,benchCb=nil,gridW=0,gridH=0}
+local QUALITY={low=.4,medium=.7,high=1,ultra=1.35}
+local function buildGrid(w,h)
+	if SCENE.gridW==w and SCENE.gridH==h then return end
+	SCENE.gridW,SCENE.gridH=w,h; clearGui(gridLayer)
+	for x=44,w-1,44 do local l=new("Frame",{Position=UDim2.fromOffset(x,0),Size=UDim2.new(0,1,1,0),BackgroundTransparency=.94,BorderSizePixel=0},gridLayer); tint(l,"BackgroundColor3","accent") end
+	for y=44,h-1,44 do local l=new("Frame",{Position=UDim2.fromOffset(0,y),Size=UDim2.new(1,0,0,1),BackgroundTransparency=.94,BorderSizePixel=0},gridLayer); tint(l,"BackgroundColor3","accent") end
+end
+local function makeParticle()
+	local f=new("Frame",{Size=UDim2.fromOffset(3,3),BackgroundTransparency=.4,BorderSizePixel=0,Visible=false},partLayer)
+	pill(f); tint(f,"BackgroundColor3","accent")
+	local g=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(12,12),BackgroundTransparency=.88,BorderSizePixel=0},f)
+	pill(g); tint(g,"BackgroundColor3","accent")
+	return {f=f,glow=g,x=0,y=0,r=1,a=.4,vx=0,vy=0,tw=0,ts=1}
+end
+local function sceneParams()
+	local v=camera and camera.ViewportSize or Vector2.new(1280,720)
+	local cap=(v.X<760) and 55 or 160
+	local target=state.particles and math.clamp(math.floor(state.particleCount*(QUALITY[state.quality] or 1)),0,cap) or 0
+	while #SCENE.pool<target do
+		local p=makeParticle(); p.x,p.y=math.random()*v.X,math.random()*v.Y
+		p.r=.9+math.random()*1.9; p.a=.2+math.random()*.45
+		p.vx,p.vy=(math.random()-.5)*.16,.08+math.random()*.32
+		p.tw,p.ts=math.random()*6.28,.5+math.random()*1.6
+		table.insert(SCENE.pool,p)
+	end
+	for i,p in ipairs(SCENE.pool) do
+		local on=i<=target; p.f.Visible=on
+		if on then p.f.Size=UDim2.fromOffset(p.r*2,p.r*2); p.glow.Visible=state.particleGlow and p.r>1.9 end
+	end
+	SCENE.live=target; auroraLayer.Visible=state.aurora; gridLayer.Visible=state.grid; buildGrid(v.X,v.Y)
+end
+RunService.RenderStepped:Connect(function(ts)
+	local dt=ts-SCENE.last
+	if dt<1/math.clamp(state.fpsCap,10,144) then return end
+	SCENE.last=ts
+	if state.pauseUnfocused and not SCENE.focused then return end
+	SCENE.frameMs=SCENE.frameMs*.9+dt*1000*.1
+	SCENE.fps=SCENE.fps*.9+(1/math.max(dt,.0001))*.1
+	if SCENE.benchUntil>0 then
+		SCENE.benchFrames+=1
+		if ts>=SCENE.benchUntil then
+			local cb,frames=SCENE.benchCb,SCENE.benchFrames
+			SCENE.benchUntil,SCENE.benchFrames,SCENE.benchCb=0,0,nil
+			if cb then cb(math.floor(frames/2)) end
+		end
+	end
+	local v=camera and camera.ViewportSize or Vector2.new(1280,720)
+	local sp=state.reduceMotion and 0 or state.driftSpeed/100
+	SCENE.t+=dt*sp
+	if state.aurora then
+		for _,b in ipairs(blobs) do
+			local c=b.cfg
+			b.root.Position=UDim2.fromScale(c.x+c.w/2+math.sin(SCENE.t*.13+b.phase)*.05,c.y+c.w/2+math.cos(SCENE.t*.11+b.phase)*.05)
+		end
+	end
+	for i=1,SCENE.live do
+		local p=SCENE.pool[i]
+		p.x+=p.vx*sp*dt*3.6; p.y-=p.vy*sp*dt*3.6; p.tw+=p.ts*dt
+		if p.y<-8 then p.y=v.Y+8; p.x=math.random()*v.X end
+		if p.x<-8 then p.x=v.X+8 elseif p.x>v.X+8 then p.x=-8 end
+		p.f.Position=UDim2.fromOffset(p.x,p.y)
+		p.f.BackgroundTransparency=1-p.a*(.62+.38*math.sin(p.tw))
+	end
+end)
+if UserInputService.WindowFocused then UserInputService.WindowFocused:Connect(function() SCENE.focused=true end) end
+if UserInputService.WindowFocusReleased then UserInputService.WindowFocusReleased:Connect(function() SCENE.focused=false end) end
+
+local scrim=new("Frame",{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=1,BorderSizePixel=0,Visible=false,ZIndex=5},gui)
+local window=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),BackgroundTransparency=1,ZIndex=10},gui)
+local shadow={}
+for _,cfg in ipairs({{g=34,t=.9},{g=18,t=.78},{g=8,t=.6}}) do
+	local f=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),BackgroundColor3=Color3.new(0,0,0),BorderSizePixel=0,ZIndex=1},window)
+	corner(f,14); table.insert(shadow,{f=f,grow=cfg.g,base=cfg.t})
+end
+local borderGlowFrame=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),BackgroundTransparency=1,ZIndex=2},window)
+corner(borderGlowFrame,12); tint(stroke(borderGlowFrame,2),"Color","accent")
+local shell=new("Frame",{Size=UDim2.fromOffset(BASE_W,BASE_H),BorderSizePixel=0,ClipsDescendants=true,ZIndex=3},window)
+tint(shell,"BackgroundColor3","main"); regRadius(corner(shell,state.radius)); tint(stroke(shell,1),"Color","line")
+local shellScale=new("UIScale",{Scale=1},shell)
+local topLine=new("Frame",{Size=UDim2.new(1,0,0,1),BorderSizePixel=0,ZIndex=9},shell)
+new("UIGradient",{Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(.5,0),NumberSequenceKeypoint.new(1,1)})},topLine)
+tint(topLine,"BackgroundColor3","accent")
+
+local sidebar=new("Frame",{Size=UDim2.fromOffset(200,BASE_H),BorderSizePixel=0,ZIndex=6},shell)
+tint(sidebar,"BackgroundColor3","side")
+local sideLine=new("Frame",{AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,0,0,0),Size=UDim2.new(0,1,1,0),BorderSizePixel=0},sidebar)
+tint(sideLine,"BackgroundColor3","line")
+local logoMark=new("Frame",{Size=UDim2.fromOffset(30,30),Position=UDim2.fromOffset(15,15),BorderSizePixel=0},sidebar)
+corner(logoMark,8); tint(logoMark,"BackgroundColor3","accent"); tint(new("UIGradient",{Rotation=35},logoMark),"Color","gradAccent")
+local logoIco=icon("sparkles",logoMark,18,"white"); logoIco.AnchorPoint=Vector2.new(.5,.5); logoIco.Position=UDim2.fromScale(.5,.5)
+local logoText=new("TextLabel",{Position=UDim2.fromOffset(54,15),Size=UDim2.fromOffset(90,20),BackgroundTransparency=1,Text="NEBULA",TextSize=17,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left},sidebar)
+tint(logoText,"TextColor3","white")
+local logoChip=new("TextLabel",{Position=UDim2.fromOffset(140,18),Size=UDim2.fromOffset(28,16),BackgroundTransparency=1,Text="v3",TextSize=10,Font=Enum.Font.GothamBold},sidebar)
+tint(logoChip,"TextColor3","accent2"); tint(stroke(logoChip,1),"Color","line"); corner(logoChip,5)
+local nav=new("ScrollingFrame",{Position=UDim2.fromOffset(0,60),Size=UDim2.new(1,0,1,-126),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y},sidebar)
+tint(nav,"ScrollBarImageColor3","line"); list(nav,nil,3); pad(nav,10,10,4,8)
+local profile=new("Frame",{AnchorPoint=Vector2.new(0,1),Position=UDim2.new(0,0,1,0),Size=UDim2.new(1,0,0,66),BorderSizePixel=0},sidebar)
+tint(profile,"BackgroundColor3","side")
+local profLine=new("Frame",{Size=UDim2.new(1,0,0,1),BorderSizePixel=0},profile); tint(profLine,"BackgroundColor3","line")
+local avatar=new("Frame",{Size=UDim2.fromOffset(34,34),Position=UDim2.fromOffset(14,17),BorderSizePixel=0},profile)
+pill(avatar); tint(avatar,"BackgroundColor3","accent"); tint(new("UIGradient",{Rotation=40},avatar),"Color","gradAccent")
+local avatarText=new("TextLabel",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text="A",TextSize=12,Font=Enum.Font.GothamBold},avatar); tint(avatarText,"TextColor3","white")
+local profileName=new("TextLabel",{Position=UDim2.fromOffset(58,17),Size=UDim2.new(1,-70,0,17),BackgroundTransparency=1,Text=state.name,TextSize=12.5,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},profile)
+tint(profileName,"TextColor3","white")
+local statusDot=new("Frame",{Size=UDim2.fromOffset(7,7),Position=UDim2.fromOffset(58,41),BorderSizePixel=0},profile); pill(statusDot)
+local statusText=new("TextLabel",{Position=UDim2.fromOffset(70,36),Size=UDim2.new(1,-82,0,16),BackgroundTransparency=1,Text="",TextSize=10.5,Font=Enum.Font.GothamMedium,TextXAlignment=Enum.TextXAlignment.Left},profile)
+tint(statusText,"TextColor3","muted")
+
+local mainFrame=new("Frame",{Position=UDim2.fromOffset(200,0),Size=UDim2.new(1,-200,1,0),BackgroundTransparency=1,ZIndex=3},shell)
+local header=new("Frame",{Size=UDim2.new(1,0,0,HEADER_H),BorderSizePixel=0,ZIndex=4},mainFrame)
+tint(header,"BackgroundColor3","main")
+local headerLine=new("Frame",{AnchorPoint=Vector2.new(0,1),Position=UDim2.new(0,0,1,0),Size=UDim2.new(1,0,0,1),BorderSizePixel=0},header); tint(headerLine,"BackgroundColor3","line")
+local hamburger=new("TextButton",{Size=UDim2.fromOffset(34,34),Position=UDim2.fromOffset(8,11),Text="",AutoButtonColor=false,Visible=false,ZIndex=5},header)
+corner(hamburger,8); tint(hamburger,"BackgroundColor3","card"); tint(stroke(hamburger),"Color","line")
+local hi=icon("menu",hamburger,16,"label"); hi.Position=UDim2.fromOffset(9,9)
+local crumbIco=icon("palette",header,15,"accent2"); crumbIco.Position=UDim2.fromOffset(16,20)
+local crumb=new("TextLabel",{Position=UDim2.fromOffset(38,0),Size=UDim2.fromOffset(130,HEADER_H),BackgroundTransparency=1,Text="",TextSize=13,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=3},header)
+tint(crumb,"TextColor3","white")
+local subtabs=new("ScrollingFrame",{Position=UDim2.fromOffset(176,12),Size=UDim2.new(1,-460,0,32),BorderSizePixel=0,ScrollBarThickness=2,ScrollingDirection=Enum.ScrollingDirection.X,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.X,ZIndex=3},header)
+tint(subtabs,"BackgroundColor3","side"); tint(subtabs,"ScrollBarImageColor3","line"); corner(subtabs,8); tint(stroke(subtabs),"Color","line"); list(subtabs,Enum.FillDirection.Horizontal,3); pad(subtabs,3,3,3,3)
+local actions=new("Frame",{AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-10,0,12),Size=UDim2.fromOffset(280,32),BackgroundTransparency=1,ZIndex=5},header)
+local dirtyDot=new("Frame",{Size=UDim2.fromOffset(7,7),Position=UDim2.fromOffset(0,12),BorderSizePixel=0,Visible=false},actions); pill(dirtyDot); tint(dirtyDot,"BackgroundColor3","warn")
+local function actionBtn(ic,mode)
+	local b=new("TextButton",{Size=UDim2.fromOffset(30,32),Text="",AutoButtonColor=false},actions)
+	corner(b,7); tint(b,"BackgroundColor3","card"); tint(stroke(b),"Color","line")
+	local h=icon(ic,b,15,mode or "label"); h.AnchorPoint=Vector2.new(.5,.5); h.Position=UDim2.fromScale(.5,.5)
+	return b,h
+end
+local soundBtn,soundIco=actionBtn("sound","accent2")
+local randBtn=actionBtn("dice","label")
+local exportBtn=actionBtn("download","label")
+local saveBtn=new("TextButton",{Size=UDim2.fromOffset(92,32),Text="",AutoButtonColor=false},actions)
+corner(saveBtn,7); tint(saveBtn,"BackgroundColor3","accent"); tint(new("UIGradient",{Rotation=25},saveBtn),"Color","gradAccent")
+local saveIco=icon("save",saveBtn,14,"white"); saveIco.Position=UDim2.fromOffset(11,9)
+local saveLabel=new("TextLabel",{Position=UDim2.fromOffset(30,0),Size=UDim2.new(1,-36,1,0),BackgroundTransparency=1,Text="Save",TextSize=12.5,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left},saveBtn)
+tint(saveLabel,"TextColor3","white")
+local minBtn=actionBtn("minus","label")
+local closeBtn=actionBtn("x","err")
+local content=new("ScrollingFrame",{Position=UDim2.fromOffset(0,HEADER_H),Size=UDim2.new(1,0,1,-HEADER_H),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=5,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,ZIndex=3},mainFrame)
+tint(content,"ScrollBarImageColor3","line")
+local colsFrame=new("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1},content)
+pad(colsFrame,16,16,16,18)
+local col1=new("Frame",{Size=UDim2.new(.5,-7,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1},colsFrame)
+local col2=new("Frame",{Position=UDim2.new(.5,7,0,0),Size=UDim2.new(.5,-7,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1},colsFrame)
+list(col1,nil,14); list(col2,nil,14)
+local drawerScrim=new("TextButton",{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=.45,Text="",AutoButtonColor=false,Visible=false,ZIndex=5},shell)
+local restorePill=new("TextButton",{AnchorPoint=Vector2.new(.5,1),Position=UDim2.new(.5,0,1,-26),Size=UDim2.fromOffset(206,46),Text="",AutoButtonColor=false,Visible=false,ZIndex=80},gui)
+pill(restorePill); tint(restorePill,"BackgroundColor3","accent"); tint(new("UIGradient",{Rotation=20},restorePill),"Color","gradAccent")
+local pillIco=icon("eye",restorePill,17,"white"); pillIco.Position=UDim2.fromOffset(20,15)
+local pillLabel=new("TextLabel",{Position=UDim2.fromOffset(46,0),Size=UDim2.new(1,-58,1,0),BackgroundTransparency=1,Text="",TextSize=13,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left},restorePill)
+tint(pillLabel,"TextColor3","white")
+local toastBox=new("Frame",{Size=UDim2.fromOffset(330,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1,ZIndex=150},gui); list(toastBox,nil,9)
+local popLayer=new("Frame",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,ZIndex=100},gui)
+
+local renderAll,renderSidebar,renderHeader,renderContent,renderProfile,layout
+local setState,markDirty,persist,toast,openPop,closePop,openModal,closeModal
+local applyLive,updateShellDecor,updateToastPos,updateSoundIcon,buildRow,sliderControl
+local activeTab,activeSub="appearance","theme"
+local drawerOpen,isMin,isHidden,singleCol=false,false,false,false
+local dirty,autoTimer,toastSeq=false,nil,0
+local popNode,popScrim,modalNode=nil,nil,nil
+local W,H,SCALE=BASE_W,BASE_H,1
+
+function updateToastPos()
+	local p=state.notifPos
+	if p=="br" then toastBox.AnchorPoint=Vector2.new(1,1); toastBox.Position=UDim2.new(1,-18,1,-18)
+	elseif p=="bl" then toastBox.AnchorPoint=Vector2.new(0,1); toastBox.Position=UDim2.new(0,18,1,-18)
+	elseif p=="tr" then toastBox.AnchorPoint=Vector2.new(1,0); toastBox.Position=UDim2.new(1,-18,0,18)
+	else toastBox.AnchorPoint=Vector2.new(.5,0); toastBox.Position=UDim2.new(.5,0,0,18) end
+end
+function toast(kind,title,msg)
+	if not state.notifEnabled then return end
+	local gate={success="notifSuccess",info="notifInfo",warning="notifWarning",error="notifError"}[kind]
+	if gate and not state[gate] then return end
+	if not state.notifStack then clearGui(toastBox) end
+	local count=0
+	for _,c in ipairs(toastBox:GetChildren()) do if c:IsA("GuiObject") then count+=1 end end
+	while count>=state.notifMax do
+		local first
+		for _,c in ipairs(toastBox:GetChildren()) do if c:IsA("GuiObject") then first=c break end end
+		if first then first:Destroy(); count-=1 else break end
+	end
+	toastSeq+=1
+	local g=makeGroup({Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1,GroupTransparency=1,LayoutOrder=toastSeq},toastBox)
+	local card=new("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BorderSizePixel=0},g)
+	corner(card,8); tint(card,"BackgroundColor3","card"); tint(stroke(card),"Color","line"); pad(card,12,12,12,12)
+	local icn=({success="check",info="info",warning="alert",error="x"})[kind] or "info"
+	local mode=({success="ok",info="info",warning="warn",error="err"})[kind] or "info"
+	local ib=new("Frame",{Size=UDim2.fromOffset(28,28),BorderSizePixel=0},card); corner(ib,7); tint(ib,"BackgroundColor3","soft")
+	local ih=icon(icn,ib,15,mode); ih.AnchorPoint=Vector2.new(.5,.5); ih.Position=UDim2.fromScale(.5,.5)
+	local tf=new("Frame",{Position=UDim2.fromOffset(38,0),Size=UDim2.new(1,-62,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1},card)
+	local tl=new("TextLabel",{Size=UDim2.new(1,0,0,16),BackgroundTransparency=1,Text=title,TextSize=12.5,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},tf); tint(tl,"TextColor3","white")
+	local ml=new("TextLabel",{Position=UDim2.fromOffset(0,18),Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1,Text=msg,TextSize=11.5,Font=Enum.Font.GothamMedium,TextXAlignment=Enum.TextXAlignment.Left,TextWrapped=true},tf); tint(ml,"TextColor3","muted")
+	local xb=new("TextButton",{AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,0,0,0),Size=UDim2.fromOffset(20,20),BackgroundTransparency=1,Text="",AutoButtonColor=false},card)
+	local xi=icon("x",xb,11,"dim"); xi.AnchorPoint=Vector2.new(.5,.5); xi.Position=UDim2.fromScale(.5,.5)
+	local bar=new("Frame",{AnchorPoint=Vector2.new(0,1),Position=UDim2.new(0,0,1,0),Size=UDim2.new(1,0,0,2),BorderSizePixel=0},card); tint(bar,"BackgroundColor3",mode)
+	fadeGroup(g,0,.28); playSound(kind)
+	local dur=state.notifDuration
+	local start,remaining,gone,timer=os.clock(),dur,false,nil
+	local function dismiss()
+		if gone then return end
+		gone=true
+		if timer then task.cancel(timer) end
+		fadeGroup(g,1,.22)
+		task.delay(.25,function() if g.Parent then g:Destroy() end end)
+	end
+	timer=task.delay(dur,dismiss)
+	tw(bar,{Size=UDim2.new(0,0,0,2)},dur)
+	xb.Activated:Connect(dismiss)
+	card.MouseEnter:Connect(function()
+		if state.notifHover and not gone then
+			if timer then task.cancel(timer) end
+			remaining=math.max(.4,remaining-(os.clock()-start))
+			bar.Size=UDim2.new(math.clamp(remaining/dur,0,1),0,0,2)
+		end
+	end)
+	card.MouseLeave:Connect(function()
+		if state.notifHover and not gone then
+			start=os.clock(); timer=task.delay(remaining,dismiss)
+			tw(bar,{Size=UDim2.new(0,0,0,2)},remaining)
+		end
+	end)
+end
+
+function closePop()
+	if popNode then popNode:Destroy(); popNode=nil end
+	if popScrim then popScrim:Destroy(); popScrim=nil end
+end
+function openPop(anchor,width,build)
+	closePop()
+	popScrim=new("TextButton",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text="",AutoButtonColor=false},popLayer)
+	popScrim.Activated:Connect(closePop)
+	popNode=new("Frame",{Size=UDim2.fromOffset(width,0),AutomaticSize=Enum.AutomaticSize.Y,BorderSizePixel=0},popLayer)
+	corner(popNode,8); tint(popNode,"BackgroundColor3","card"); tint(stroke(popNode),"Color","line"); pad(popNode,8,8,8,8); list(popNode,nil,4)
+	build(popNode)
+	local i=0
+	for _,c in ipairs(popNode:GetChildren()) do if c:IsA("GuiObject") then i+=1; c.LayoutOrder=i end end
+	task.defer(function()
+		if not popNode then return end
+		local v=camera and camera.ViewportSize or Vector2.new(1280,720)
+		local ap,as,ps=anchor.AbsolutePosition,anchor.AbsoluteSize,popNode.AbsoluteSize
+		local x=math.clamp(ap.X+as.X-ps.X,8,math.max(8,v.X-ps.X-8))
+		local y=ap.Y+as.Y+6
+		if y+ps.Y>v.Y-8 then y=math.max(8,ap.Y-ps.Y-6) end
+		popNode.Position=UDim2.fromOffset(x,y)
+	end)
+end
+function closeModal() if modalNode then modalNode:Destroy(); modalNode=nil end end
+function openModal(title,icn,body,extra)
+	closeModal(); closePop()
+	modalNode=new("Frame",{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=.55,BorderSizePixel=0},popLayer)
+	local mb=new("TextButton",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text="",AutoButtonColor=false},modalNode)
+	mb.Activated:Connect(closeModal)
+	local m=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(math.min(480,(camera and camera.ViewportSize.X or 1280)-32),0),AutomaticSize=Enum.AutomaticSize.Y,BorderSizePixel=0},modalNode)
+	corner(m,10); tint(m,"BackgroundColor3","card"); tint(stroke(m),"Color","line"); pad(m,18,18,18,18); list(m,nil,10)
+	local head=new("Frame",{Size=UDim2.new(1,0,0,24),BackgroundTransparency=1,LayoutOrder=1},m)
+	local hh=icon(icn,head,18,"accent2"); hh.Position=UDim2.fromOffset(0,3)
+	local ht=new("TextLabel",{Position=UDim2.fromOffset(26,0),Size=UDim2.new(1,-26,1,0),BackgroundTransparency=1,Text=title,TextSize=15,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left},head); tint(ht,"TextColor3","white")
+	local order=1
+	for _,text in ipairs(body) do
+		order+=1
+		local p=new("TextLabel",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1,Text=text,TextSize=12,Font=Enum.Font.GothamMedium,TextXAlignment=Enum.TextXAlignment.Left,TextWrapped=true,LayoutOrder=order},m)
+		tint(p,"TextColor3","muted")
+	end
+	if extra then extra(m,function() order+=1; return order end) end
+	order+=1
+	local okb=new("TextButton",{Size=UDim2.new(1,0,0,34),Text=t("ok"),TextSize=12,Font=Enum.Font.GothamBold,AutoButtonColor=false,LayoutOrder=order},m)
+	corner(okb,7); tint(okb,"BackgroundColor3","accent"); tint(okb,"TextColor3","white")
+	okb.Activated:Connect(function() playSound("click"); closeModal() end)
+end
+
+function markDirty()
+	dirty=true; dirtyDot.Visible=true
+	if state.autoSave then
+		if autoTimer then task.cancel(autoTimer) end
+		autoTimer=task.delay(.8,function() if dirty then persist(true) end end)
+	end
+end
+function persist(silent)
+	local ok,enc=pcall(function() return HttpService:JSONEncode(state) end)
+	if ok then gui:SetAttribute("Config",enc) end
+	dirty=false; dirtyDot.Visible=false
+	if remote then pcall(function() remote:FireServer(enc) end) end
+	if not silent then
+		saveLabel.Text=t("saved"); saveIco.Visible=false
+		task.delay(1.3,function() if saveLabel.Parent then saveLabel.Text=t("save"); saveIco.Visible=true end end)
+		toast("success",t("savedTitle"),t("savedMsg"))
+	end
+	for _,e in ipairs(liveInfo) do if e.o.Parent then e.o.Text=e.f() end end
+end
+function setState(id,v)
+	if state[id]==v then return end
+	state[id]=v; markDirty(); applyLive(id)
+end
+
+local function rowBase(parent,h) return new("Frame",{Size=UDim2.new(1,0,0,h or rowH()),BackgroundTransparency=1},parent) end
+local function rowLabel(parent,text,off)
+	local l=new("TextLabel",{Size=UDim2.new(1,off or -112,1,0),Position=UDim2.fromOffset(2,0),BackgroundTransparency=1,Text=text,TextSize=12.5,Font=Enum.Font.GothamMedium,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},parent)
+	tint(l,"TextColor3","label"); return l
+end
+local function gearButton(parent,row,right)
+	local g=new("TextButton",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,right,.5,0),Size=UDim2.fromOffset(24,24),BackgroundTransparency=1,Text="",AutoButtonColor=false},parent)
+	local gi=icon("gear",g,14,"dim"); gi.AnchorPoint=Vector2.new(.5,.5); gi.Position=UDim2.fromScale(.5,.5)
+	g.Activated:Connect(function()
+		playSound("click")
+		openPop(g,252,function(p)
+			local h=new("TextLabel",{Size=UDim2.new(1,0,0,20),BackgroundTransparency=1,Text=lab(row.label),TextSize=10,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left},p)
+			tint(h,"TextColor3","accent2")
+			for _,gr in ipairs(row.gear) do buildRow(p,gr,true) end
+		end)
+	end)
+	return g
+end
+local function toggleRow(parent,row)
+	local r=rowBase(parent)
+	rowLabel(r,lab(row.label),row.gear and -152 or -112)
+	if row.gear then gearButton(r,row,-52) end
+	local sw=new("TextButton",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-6,.5,0),Size=UDim2.fromOffset(42,23),Text="",AutoButtonColor=false},r)
+	pill(sw); tint(stroke(sw),"Color","line")
+	local knob=new("Frame",{Size=UDim2.fromOffset(17,17),Position=UDim2.fromOffset(2,3),BackgroundColor3=Color3.new(1,1,1),BorderSizePixel=0},sw); pill(knob)
+	local function paintSw()
+		local on=state[row.id]
+		sw.BackgroundColor3=on and accent() or modeColor("off")
+		tw(knob,{Position=UDim2.fromOffset(on and 23 or 2,3)})
+	end
+	paintSw()
+	table.insert(tints,{o=sw,p="BackgroundColor3",m="off",dyn=function() return state[row.id] and accent() or modeColor("off") end})
+	sw.Activated:Connect(function() setState(row.id,not state[row.id]); paintSw(); playSound("click") end)
+end
+local function comboRow(parent,row,compact)
+	local r=rowBase(parent)
+	local w=compact and 118 or 152
+	rowLabel(r,lab(row.label),-(w+16))
+	local b=new("TextButton",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-6,.5,0),Size=UDim2.fromOffset(w,31),Text="",AutoButtonColor=false},r)
+	corner(b,6); tint(b,"BackgroundColor3","input"); tint(stroke(b),"Color","line")
+	local v=new("TextLabel",{Size=UDim2.new(1,-26,1,0),Position=UDim2.fromOffset(9,0),BackgroundTransparency=1,TextSize=11.5,Font=Enum.Font.GothamMedium,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},b); tint(v,"TextColor3","label")
+	local ch=icon("chevron",b,13,"dim"); ch.AnchorPoint=Vector2.new(1,.5); ch.Position=UDim2.new(1,-8,.5,0)
+	local function cur() for _,o in ipairs(row.options) do if o.value==state[row.id] then return lab(o.label) end end return tostring(state[row.id]) end
+	v.Text=cur()
+	b.Activated:Connect(function()
+		playSound("click")
+		openPop(b,math.max(w,178),function(p)
+			for _,o in ipairs(row.options) do
+				local it=new("TextButton",{Size=UDim2.new(1,0,0,31),BackgroundTransparency=1,Text="",AutoButtonColor=false},p); corner(it,6)
+				local sel=o.value==state[row.id]
+				local il=new("TextLabel",{Size=UDim2.new(1,-26,1,0),Position=UDim2.fromOffset(9,0),BackgroundTransparency=1,Text=lab(o.label),TextSize=11.5,Font=Enum.Font.GothamMedium,TextXAlignment=Enum.TextXAlignment.Left},it)
+				tint(il,"TextColor3",sel and "accent2" or "label")
+				if sel then local ci=icon("check",it,12,"accent2"); ci.AnchorPoint=Vector2.new(1,.5); ci.Position=UDim2.new(1,-8,.5,0) end
+				it.MouseEnter:Connect(function() it.BackgroundColor3=accent(); tw(it,{BackgroundTransparency=.9}) end)
+				it.MouseLeave:Connect(function() tw(it,{BackgroundTransparency=1}) end)
+				it.Activated:Connect(function() setState(row.id,o.value); v.Text=cur(); closePop(); playSound("click") end)
+			end
+		end)
+	end)
+end
+function sliderControl(parent,cfg)
+	local holder=new("Frame",{Size=UDim2.new(1,0,0,42),BackgroundTransparency=1},parent)
+	local top=new("Frame",{Size=UDim2.new(1,0,0,18),BackgroundTransparency=1},holder)
+	if cfg.label then
+		local l=new("TextLabel",{Size=UDim2.new(1,-70,1,0),Position=UDim2.fromOffset(2,0),BackgroundTransparency=1,Text=cfg.label,TextSize=12.5,Font=Enum.Font.GothamMedium,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},top); tint(l,"TextColor3","label")
+	end
+	local chip=new("TextLabel",{AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-2,0,0),Size=UDim2.fromOffset(64,18),BackgroundTransparency=1,TextSize=11,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Right},top); tint(chip,"TextColor3","accent2")
+	local track=new("TextButton",{Position=UDim2.fromOffset(2,26),Size=UDim2.new(1,-4,0,6),Text="",AutoButtonColor=false},holder)
+	corner(track,3); tint(track,"BackgroundColor3","track")
+	local fill=new("Frame",{Size=UDim2.fromScale(0,1),BorderSizePixel=0},track); corner(fill,3); tint(fill,"BackgroundColor3","accent")
+	local knob=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(0,.5),Size=UDim2.fromOffset(15,15),BackgroundColor3=Color3.new(1,1,1),BorderSizePixel=0,ZIndex=2},track)
+	pill(knob); tint(stroke(knob,3),"Color","accent")
+	local step=cfg.step or 1
+	local function fmt(v) return (step<1 and string.format("%.1f",v) or tostring(math.floor(v+.5)))..(cfg.unit or "") end
+	local function paintSlider()
+		local val=cfg.get(); local ratio=math.clamp((val-cfg.min)/(cfg.max-cfg.min),0,1)
+		fill.Size=UDim2.fromScale(ratio,1); knob.Position=UDim2.fromScale(ratio,.5); chip.Text=fmt(val)
+	end
+	paintSlider()
+	local active=false
+	local function fromX(x)
+		local ratio=math.clamp((x-track.AbsolutePosition.X)/math.max(1,track.AbsoluteSize.X),0,1)
+		local val=math.clamp(math.floor((cfg.min+ratio*(cfg.max-cfg.min))/step+.5)*step,cfg.min,cfg.max)
+		cfg.set(val); paintSlider()
+	end
+	track.InputBegan:Connect(function(i)
+		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then active=true; fromX(i.Position.X) end
+	end)
+	UserInputService.InputChanged:Connect(function(i)
+		if active and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then fromX(i.Position.X) end
+	end)
+	UserInputService.InputEnded:Connect(function(i)
+		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then active=false end
+	end)
+	return holder,paintSlider
+end
+local function sliderRow(parent,row)
+	sliderControl(parent,{label=lab(row.label),min=row.min,max=row.max,step=row.step,unit=row.unit,get=function() return state[row.id] end,set=function(v) setState(row.id,v) end})
+end
+local function textRow(parent,row)
+	local r=rowBase(parent); rowLabel(r,lab(row.label),-168)
+	local box=new("TextBox",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-6,.5,0),Size=UDim2.fromOffset(152,31),Text=state[row.id],TextSize=11.5,Font=Enum.Font.GothamMedium,ClearTextOnFocus=false,PlaceholderText="…"},r)
+	corner(box,6); tint(box,"BackgroundColor3","input"); tint(box,"TextColor3","white"); tint(stroke(box),"Color","line")
+	box.FocusLost:Connect(function() setState(row.id,box.Text~="" and box.Text or "User"); box.Text=state[row.id] end)
+end
+local function openColorPicker(anchor)
+	openPop(anchor,250,function(p)
+		local head=new("TextLabel",{Size=UDim2.new(1,0,0,18),BackgroundTransparency=1,Text=t("colorPicker"),TextSize=10,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left},p); tint(head,"TextColor3","accent2")
+		local preview=new("Frame",{Size=UDim2.new(1,0,0,36),BorderSizePixel=0},p); corner(preview,7); tint(stroke(preview),"Color","line")
+		local hexl=new("TextLabel",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text=state.accent,TextSize=13,Font=Enum.Font.Code},preview); tint(hexl,"TextColor3","white")
+		local function refresh() preview.BackgroundColor3=accent(); hexl.Text=state.accent end
+		refresh()
+		for _,ch in ipairs({"R","G","B"}) do
+			sliderControl(p,{label=ch,min=0,max=255,step=1,unit="",
+				get=function() local c=accent(); return math.floor((ch=="R" and c.R or ch=="G" and c.G or c.B)*255+.5) end,
+				set=function(v)
+					local c=accent()
+					setState("accent",colorToHex(Color3.new(ch=="R" and v/255 or c.R,ch=="G" and v/255 or c.G,ch=="B" and v/255 or c.B)))
+					refresh()
+				end})
+		end
+		local done=new("TextButton",{Size=UDim2.new(1,0,0,32),Text=t("ready"),TextSize=12,Font=Enum.Font.GothamBold,AutoButtonColor=false},p)
+		corner(done,7); tint(done,"BackgroundColor3","accent"); tint(done,"TextColor3","white")
+		done.Activated:Connect(function() playSound("click"); closePop() end)
+	end)
+end
+local function swatchRow(parent,row)
+	local r=rowBase(parent,rowH()+28); rowLabel(r,lab(row.label),-10)
+	local wrap=new("Frame",{Position=UDim2.fromOffset(2,26),Size=UDim2.new(1,-4,0,26),BackgroundTransparency=1},r); list(wrap,Enum.FillDirection.Horizontal,7)
+	local marks={}
+	local function mark() for hex,b in pairs(marks) do b:FindFirstChildOfClass("UIStroke").Thickness=(hex:lower()==state.accent:lower()) and 2 or 0 end end
+	for _,hex in ipairs(PRESETS) do
+		local b=new("TextButton",{Size=UDim2.fromOffset(26,26),BackgroundColor3=hexToColor(hex),Text="",AutoButtonColor=false},wrap)
+		pill(b); local st=stroke(b,0); st.Color=Color3.new(1,1,1); marks[hex]=b
+		b.Activated:Connect(function() setState("accent",hex); mark(); playSound("click") end)
+	end
+	local well=new("TextButton",{Size=UDim2.fromOffset(26,26),BackgroundTransparency=1,Text="",AutoButtonColor=false},wrap)
+	pill(well); local ws=stroke(well,1); ws.Color=pal().muted
+	local pi=icon("plus",well,13,"muted"); pi.AnchorPoint=Vector2.new(.5,.5); pi.Position=UDim2.fromScale(.5,.5)
+	well.Activated:Connect(function() playSound("click"); openColorPicker(well) end)
+	mark()
+end
+local function infoRow(parent,row)
+	local r=rowBase(parent); rowLabel(r,lab(row.label),-150)
+	local v=new("TextLabel",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-6,.5,0),Size=UDim2.fromOffset(146,20),BackgroundTransparency=1,Text="",TextSize=11.5,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Right,TextTruncate=Enum.TextTruncate.AtEnd},r)
+	tint(v,"TextColor3","accent2")
+	local getter=row.getter or function() return lab(row.value) end
+	v.Text=getter()
+	if row.live then table.insert(liveInfo,{o=v,f=getter}) end
+end
+local function buttonRow(parent,row)
+	local r=rowBase(parent,38)
+	local b=new("TextButton",{Size=UDim2.new(1,0,0,34),Text="",AutoButtonColor=false},r); corner(b,7)
+	if row.style=="primary" then tint(b,"BackgroundColor3","accent"); tint(new("UIGradient",{Rotation=20},b),"Color","gradAccent")
+	elseif row.style=="danger" then b.BackgroundColor3=mix(SEM.err,pal().card,.82); tint(stroke(b),"Color","line")
+	else tint(b,"BackgroundColor3","input"); tint(stroke(b),"Color","line") end
+	local mode=row.style=="primary" and "white" or (row.style=="danger" and "err" or "label")
+	local bi=icon(row.icon,b,14,mode); bi.Position=UDim2.fromOffset(12,10)
+	local bl=new("TextLabel",{Position=UDim2.fromOffset(34,0),Size=UDim2.new(1,-44,1,0),BackgroundTransparency=1,Text=lab(row.label),TextSize=12,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},b)
+	tint(bl,"TextColor3",mode)
+	b.Activated:Connect(function() playSound("click"); row.fn(b,bl) end)
+end
+function buildRow(parent,row,compact)
+	local ty=row.type
+	if ty=="toggle" then toggleRow(parent,row)
+	elseif ty=="combo" then comboRow(parent,row,compact)
+	elseif ty=="slider" then sliderRow(parent,row)
+	elseif ty=="text" then textRow(parent,row)
+	elseif ty=="swatch" then swatchRow(parent,row)
+	elseif ty=="info" then infoRow(parent,row)
+	elseif ty=="button" then buttonRow(parent,row) end
+end
+
+local confirmUntil=0
+local function doReset()
+	for k,v in pairs(DEFAULTS) do state[k]=v end
+	state.name=player.DisplayName; confirmUntil=0
+	renderAll(); paint(); applyRadius(); updateShellDecor(); updateToastPos(); updateSoundIcon(); sceneParams(); layout()
+	markDirty(); toast("warning",t("resetTitle"),t("resetMsg"))
+end
+local function actReset(b,l)
+	if os.clock()<confirmUntil then doReset() return end
+	confirmUntil=os.clock()+2.6
+	local oldText=l.Text; l.Text=t("confirmReset")
+	task.delay(2.6,function() if l.Parent and l.Text==t("confirmReset") then l.Text=oldText end end)
+end
+local function actRandom()
+	state.accent=PRESETS[math.random(#PRESETS)]
+	local th={"midnight","abyss","contrast"}; state.theme=th[math.random(#th)]
+	state.radius=math.random(0,16)
+	local d={"compact","normal","roomy"}; state.density=d[math.random(#d)]
+	state.particleCount=math.random(40,150); state.driftSpeed=math.random(20,160)
+	renderAll(); paint(); applyRadius(); sceneParams(); layout(); markDirty()
+	toast("info",t("randomTitle"),t("randomMsg"))
+end
+local function actExport()
+	local enc="{}"; pcall(function() enc=HttpService:JSONEncode(state) end)
+	openModal(t("exportTitle"),"download",{t("exportHint")},function(m,nextOrder)
+		local box=new("TextBox",{Size=UDim2.new(1,0,0,120),Text=enc,TextSize=11,Font=Enum.Font.Code,TextWrapped=true,MultiLine=true,ClearTextOnFocus=false,TextEditable=true,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Top,LayoutOrder=nextOrder()},m)
+		corner(box,7); tint(box,"BackgroundColor3","input"); tint(box,"TextColor3","label"); tint(stroke(box),"Color","line"); pad(box,8,8,8,8)
+		if remote then
+			local sb=new("TextButton",{Size=UDim2.new(1,0,0,34),Text=t("sendServer"),TextSize=12,Font=Enum.Font.GothamBold,AutoButtonColor=false,LayoutOrder=nextOrder()},m)
+			corner(sb,7); tint(sb,"BackgroundColor3","input"); tint(sb,"TextColor3","label"); tint(stroke(sb),"Color","line")
+			sb.Activated:Connect(function() pcall(function() remote:FireServer(box.Text) end); playSound("click"); toast("info",t("exportTitle"),t("sentServer")) end)
+		end
+	end)
+end
+local function actImport()
+	openModal(t("importTitle"),"upload",{t("importHint")},function(m,nextOrder)
+		local box=new("TextBox",{Size=UDim2.new(1,0,0,120),Text="",PlaceholderText='{"accent":"#0095FF", ...}',TextSize=11,Font=Enum.Font.Code,TextWrapped=true,MultiLine=true,ClearTextOnFocus=false,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Top,LayoutOrder=nextOrder()},m)
+		corner(box,7); tint(box,"BackgroundColor3","input"); tint(box,"TextColor3","label"); tint(stroke(box),"Color","line"); pad(box,8,8,8,8)
+		local ab=new("TextButton",{Size=UDim2.new(1,0,0,34),Text=t("apply"),TextSize=12,Font=Enum.Font.GothamBold,AutoButtonColor=false,LayoutOrder=nextOrder()},m)
+		corner(ab,7); tint(ab,"BackgroundColor3","accent"); tint(ab,"TextColor3","white")
+		ab.Activated:Connect(function()
+			local ok,data=pcall(function() return HttpService:JSONDecode(box.Text) end)
+			local n=0
+			if ok and type(data)=="table" then
+				local src=type(data.state)=="table" and data.state or data
+				for k,v in pairs(DEFAULTS) do if src[k]~=nil and typeof(src[k])==typeof(v) then state[k]=src[k]; n+=1 end end
+			end
+			if n>0 then
+				renderAll(); paint(); applyRadius(); updateShellDecor(); updateToastPos(); updateSoundIcon(); sceneParams(); layout(); markDirty()
+				closeModal(); toast("success",t("importOk"),t("importOkMsg"))
+			else toast("error",t("importErr"),t("importErrMsg")) end
+		end)
+	end)
+end
+local function actClear()
+	gui:SetAttribute("Config",nil)
+	for _,e in ipairs(liveInfo) do if e.o.Parent then e.o.Text=e.f() end end
+	toast("warning",t("clearTitle"),t("clearMsg"))
+end
+local function actUpdate(b,l)
+	toast("info",t("updateTitle"),t("updateMsg"))
+	local oldText=l.Text; l.Text="…"
+	task.delay(1.3,function() if l.Parent then l.Text=oldText end; toast("success",t("latestTitle"),t("latestMsg")) end)
+end
+local function actBench(b,l)
+	l.Text="2s…"
+	SCENE.benchUntil=os.clock()+2
+	SCENE.benchCb=function(fps)
+		state.benchResult=fps.." fps"
+		if l.Parent then l.Text=lab(L("Тест производительности","Run benchmark")) end
+		for _,e in ipairs(liveInfo) do if e.o.Parent then e.o.Text=e.f() end end
+		toast("success",t("benchTitle"),t("benchMsg")..fps.." fps")
+	end
+end
+local function actDocs() openModal(t("docs"),"book",{t("docsBody1"),t("docsBody2"),t("hotkeysTitle")..": "..t("hotkeysBody")}) end
+local function actChangelog() openModal(t("changelog"),"sparkles",{t("changelogBody")}) end
+local function actTest(kind) return function() toast(kind,t("testTitle"),t("testMsg")) end end
+
+local function OPT(v,ru,en) return {value=v,label=L(ru,en)} end
+local O_STATUS={OPT("online","В сети","Online"),OPT("away","Отошёл","Away"),OPT("dnd","Не беспокоить","Do not disturb"),OPT("invisible","Невидимка","Invisible")}
+local O_THEME={OPT("midnight","Полуночная","Midnight"),OPT("abyss","Глубокая","Abyss"),OPT("contrast","Контрастная","Contrast")}
+local O_DENSITY={OPT("compact","Компактная","Compact"),OPT("normal","Обычная","Normal"),OPT("roomy","Просторная","Roomy")}
+local O_CLOSE={OPT("hide","Скрыть окно","Hide window"),OPT("minimize","Свернуть","Minimize")}
+local O_LANG={OPT("ru","Русский","Russian"),OPT("en","English","English")}
+local O_QUAL={OPT("low","Низкое","Low"),OPT("medium","Среднее","Medium"),OPT("high","Высокое","High"),OPT("ultra","Ультра","Ultra")}
+local O_POS={OPT("br","Справа снизу","Bottom right"),OPT("bl","Слева снизу","Bottom left"),OPT("tr","Справа сверху","Top right"),OPT("tc","Сверху центр","Top center")}
+local O_MAX={OPT(1,"1","1"),OPT(3,"3","3"),OPT(5,"5","5")}
+local O_CHAN={OPT("stable","Стабильный","Stable"),OPT("beta","Бета","Beta")}
+local function R(ty,id,label,extra) local r={type=ty,id=id,label=label}; if extra then for k,v in pairs(extra) do r[k]=v end end; return r end
+local function C(ic,title,rows) return {icon=ic,title=title,rows=rows} end
+local SCHEMA={
+ {id="appearance",group="main",icon="palette",label=L("Внешний вид","Appearance"),
+  subs={{id="theme",label=L("Тема","Theme")},{id="scene",label=L("Сцена","Scene")},{id="window",label=L("Окно","Window")}},
+  cards={
+   theme={C("sparkles",L("Акцент","Accent"),{R("swatch","accent",L("Акцентный цвет","Accent color")),R("toggle","glow",L("Свечение акцента","Accent glow")),R("toggle","borderGlow",L("Подсветка границ","Border glow"))}),
+          C("moon",L("Оформление","Styling"),{R("combo","theme",L("Тема окна","Window theme"),{options=O_THEME}),R("slider","radius",L("Скругление углов","Corner radius"),{min=0,max=16,step=1,unit=" px"}),R("combo","density",L("Плотность строк","Row density"),{options=O_DENSITY}),R("toggle","compact",L("Компактный сайдбар","Compact sidebar"))})},
+   scene={C("image",L("Фон сцены","Scene background"),{R("toggle","aurora",L("Аврора","Aurora")),R("toggle","grid",L("Сетка","Grid")),R("toggle","particles",L("Частицы","Particles")),R("slider","particleCount",L("Количество частиц","Particle count"),{min=0,max=160,step=5})}),
+          C("activity",L("Движение","Motion"),{R("slider","driftSpeed",L("Скорость дрейфа","Drift speed"),{min=0,max=200,step=10,unit="%"}),R("toggle","particleGlow",L("Свечение частиц","Particle glow")),R("toggle","reduceMotion",L("Уменьшить движение","Reduce motion"))})},
+   window={C("monitor",L("Окно","Window"),{R("slider","uiScale",L("Масштаб интерфейса","Interface scale"),{min=80,max=125,step=5,unit="%"}),R("slider","shadowDepth",L("Глубина тени","Shadow depth"),{min=0,max=100,step=5,unit="%"}),R("toggle","frosted",L("Матовое стекло","Frosted glass")),R("toggle","animations",L("Анимации интерфейса","Interface animations"))}),
+           C("user",L("Профиль","Profile"),{R("text","name",L("Отображаемое имя","Display name")),R("combo","status",L("Статус","Status"),{options=O_STATUS}),R("toggle","showProfile",L("Блок профиля","Profile block"))})}
+  }},
+ {id="general",group="main",icon="sliders",label=L("Общие","General"),
+  subs={{id="behavior",label=L("Поведение","Behavior")},{id="data",label=L("Данные","Data")}},
+  cards={
+   behavior={C("mouse",L("Управление","Controls"),{R("combo","language",L("Язык интерфейса","Interface language"),{options=O_LANG}),R("toggle","drag",L("Перетаскивание окна","Window dragging")),R("toggle","hotkeys",L("Горячие клавиши","Hotkeys")),R("combo","closeAction",L("При закрытии","Close action"),{options=O_CLOSE}),R("toggle","rememberPos",L("Запоминать позицию","Remember position"))}),
+             C("power",L("Запуск","Startup"),{R("toggle","startMin",L("Запускать свёрнутым","Start minimized")),R("toggle","autoSave",L("Автосохранение","Auto-save")),R("toggle","checkUpdates",L("Проверять обновления","Check for updates"),{gear={R("combo","updChannel",L("Канал","Channel"),{options=O_CHAN}),R("toggle","updPre",L("Пре-релизы","Pre-releases"))}})})},
+   data={C("database",L("Конфигурация","Configuration"),{R("button",nil,L("Экспорт конфига","Export config"),{icon="download",style="primary",fn=actExport}),R("button",nil,L("Импорт конфига","Import config"),{icon="upload",fn=actImport}),R("button",nil,L("Случайный стиль","Random style"),{icon="dice",fn=actRandom}),R("button",nil,L("Сбросить настройки","Reset settings"),{icon="refresh",style="danger",fn=actReset})}),
+         C("shield",L("Хранилище","Storage"),{R("info",nil,L("Размер конфига","Config size"),{live=true,getter=function() local raw=gui:GetAttribute("Config"); return raw and string.format("%.1f KB",#raw/1024) or "—" end}),R("info",nil,L("Синхронизация","Sync"),{live=true,getter=function() return remote and t("syncRemote") or t("syncLocal") end}),R("button",nil,L("Очистить данные","Clear saved data"),{icon="trash",style="danger",fn=actClear})})}
+  }},
+ {id="performance",group="system",icon="cpu",label=L("Производительность","Performance"),
+  subs={{id="render",label=L("Рендер","Rendering")},{id="diag",label=L("Диагностика","Diagnostics")}},
+  cards={
+   render={C("zap",L("Качество","Quality"),{R("combo","quality",L("Пресет качества","Quality preset"),{options=O_QUAL}),R("slider","fpsCap",L("Лимит FPS сцены","Scene FPS cap"),{min=15,max=120,step=5,unit=" fps"}),R("toggle","pauseUnfocused",L("Пауза без фокуса","Pause when unfocused"))}),
+           C("gauge",L("Сцена","Scene"),{R("info",nil,L("Разрешение","Viewport"),{live=true,getter=function() local v=camera and camera.ViewportSize or Vector2.new(0,0); return math.floor(v.X).."×"..math.floor(v.Y) end}),R("info",nil,L("GUI-объектов","GUI objects"),{live=true,getter=function() return tostring(#gui:GetDescendants()) end}),R("info",nil,L("Множитель пресета","Preset multiplier"),{live=true,getter=function() return "×"..tostring(QUALITY[state.quality] or 1) end})})},
+   diag={C("terminal",L("Диагностика","Diagnostics"),{R("info",nil,L("FPS сцены","Scene FPS"),{live=true,getter=function() return string.format("%.0f",SCENE.fps) end}),R("info",nil,L("Кадр, мс","Frame, ms"),{live=true,getter=function() return string.format("%.1f",SCENE.frameMs) end}),R("info",nil,L("Частиц в сцене","Scene particles"),{live=true,getter=function() return tostring(SCENE.live) end})}),
+         C("activity",L("Тест","Benchmark"),{R("button",nil,L("Тест производительности","Run benchmark"),{icon="activity",style="primary",fn=actBench}),R("info",nil,L("Результат теста","Benchmark result"),{live=true,getter=function() return state.benchResult end})})}
+  }},
+ {id="notifications",group="system",icon="bell",label=L("Уведомления","Notifications"),
+  subs={{id="general",label=L("Общие","General")},{id="types",label=L("Типы","Types")}},
+  cards={
+   general={C("bell",L("Оповещения","Alerts"),{R("toggle","notifEnabled",L("Уведомления","Notifications"),{gear={R("combo","notifPos",L("Позиция","Position"),{options=O_POS}),R("slider","notifDuration",L("Длительность","Duration"),{min=2,max=8,step=1,unit=" s"}),R("toggle","notifStack",L("Накапливать очередь","Stack queue"))}}),R("toggle","sound",L("Звук интерфейса","Interface sound")),R("toggle","notifHover",L("Пауза при наведении","Pause on hover"))}),
+            C("clock",L("Поведение","Behavior"),{R("combo","notifMax",L("Максимум на экране","Max visible"),{options=O_MAX}),R("info",nil,L("Совет","Tip"),{value=L("M — скрыть окно","M — hide window")})})},
+   types={C("filter",L("Категории","Categories"),{R("toggle","notifSuccess",L("Успех","Success")),R("toggle","notifInfo",L("Информация","Information")),R("toggle","notifWarning",L("Предупреждения","Warnings")),R("toggle","notifError",L("Ошибки","Errors"))}),
+          C("send",L("Проверка","Preview"),{R("button",nil,L("Тест: успех","Test: success"),{icon="check",fn=actTest("success")}),R("button",nil,L("Тест: инфо","Test: info"),{icon="info",fn=actTest("info")}),R("button",nil,L("Тест: предупреждение","Test: warning"),{icon="alert",fn=actTest("warning")}),R("button",nil,L("Тест: ошибка","Test: error"),{icon="x",fn=actTest("error")})})}
+  }},
+ {id="about",group="system",icon="info",label=L("О программе","About"),
+  subs={{id="info",label=L("Информация","Info")},{id="credits",label=L("Авторы","Credits")}},
+  cards={
+   info={C("sparkles",L("NEBULA UI","NEBULA UI"),{R("info",nil,L("Версия","Version"),{value=L("v3.0.2","v3.0.2")}),R("info",nil,L("Сборка","Build"),{value=L("19.11.2026","19.11.2026")}),R("info",nil,L("Движок","Engine"),{value=L("Roblox Luau","Roblox Luau")}),R("button",nil,L("Проверить обновления","Check for updates"),{icon="refresh",style="primary",fn=actUpdate})}),
+         C("shield",L("Лицензия","License"),{R("info",nil,L("Лицензия","License"),{getter=function() return t("licenseVal") end}),R("toggle","telemetry",L("Анонимная телеметрия","Anonymous telemetry")),R("button",nil,L("Документация","Documentation"),{icon="book",fn=actDocs})})},
+   credits={C("pen",L("Дизайн","Design"),{R("info",nil,L("Стиль","Style"),{getter=function() return t("styleVal") end}),R("info",nil,L("Дизайн","Design"),{value=L("NEBULA Team","NEBULA Team")})}),
+            C("code",L("Технологии","Technology"),{R("info",nil,L("Стек","Stack"),{value=L("Luau · ScreenGui","Luau · ScreenGui")}),R("info",nil,L("Платформы","Platforms"),{value=L("PC + Mobile","PC + Mobile")}),R("button",nil,L("Что нового","What's new"),{icon="sparkles",fn=actChangelog})})}
+  }},
+}
+local function findTab(id) for _,tb in ipairs(SCHEMA) do if tb.id==id then return tb end end return SCHEMA[1] end
+
+function renderProfile()
+	profile.Visible=state.showProfile
+	profileName.Text=state.name
+	local initials=""
+	for word in tostring(state.name):gmatch("%S+") do
+		initials..=word:match("^[%z\1-\127\194-\244][\128-\191]*") or word:sub(1,1)
+		if utf8len(initials)>=2 then break end
+	end
+	avatarText.Text=initials~="" and initials or "U"
+	local map={online="ok",away="warn",dnd="err",invisible="dim"}
+	local labels={online=L("В сети","Online"),away=L("Отошёл","Away"),dnd=L("Не беспокоить","Do not disturb"),invisible=L("Невидимка","Invisible")}
+	statusDot.BackgroundColor3=modeColor(map[state.status] or "ok")
+	statusText.Text=lab(labels[state.status] or labels.online)
+end
+function renderSidebar()
+	clearGui(nav)
+	local compact=state.compact and W>=760
+	logoText.Visible=not compact; logoChip.Visible=not compact
+	profileName.Visible=not compact; statusDot.Visible=not compact; statusText.Visible=not compact
+	local order=0
+	for _,g in ipairs({{"main","groupMain"},{"system","groupSystem"}}) do
+		local items={}
+		for _,tb in ipairs(SCHEMA) do if tb.group==g[1] then table.insert(items,tb) end end
+		if #items>0 then
+			order+=1
+			if compact then local ln=new("Frame",{Size=UDim2.new(1,0,0,1),BorderSizePixel=0,LayoutOrder=order},nav); tint(ln,"BackgroundColor3","line")
+			else local gt=new("TextLabel",{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,Text=t(g[2]),TextSize=9.5,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left,LayoutOrder=order},nav); tint(gt,"TextColor3","dim") end
+			for _,tb in ipairs(items) do
+				order+=1
+				local active=tb.id==activeTab
+				local b=new("TextButton",{Size=UDim2.new(1,0,0,38),Text="",AutoButtonColor=false,LayoutOrder=order,BackgroundTransparency=active and 0 or 1},nav); corner(b,6)
+				if active then b.BackgroundColor3=modeColor("softSide") end
+				table.insert(tints,{o=b,p="BackgroundColor3",m="softSide"})
+				local ih=icon(tb.icon,b,16,active and "accent2" or "muted"); ih.Position=UDim2.fromOffset(compact and 12 or 10,11)
+				if not compact then
+					local tl=new("TextLabel",{Position=UDim2.fromOffset(38,0),Size=UDim2.new(1,-46,1,0),BackgroundTransparency=1,Text=lab(tb.label),TextSize=13,Font=Enum.Font.GothamMedium,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},b)
+					tint(tl,"TextColor3",active and "white" or "muted")
+				end
+				if active then local ind=new("Frame",{Size=UDim2.new(0,3,.6,0),Position=UDim2.new(0,-10,.2,0),BorderSizePixel=0},b); tint(ind,"BackgroundColor3","accent") end
+				b.MouseEnter:Connect(function() if not active then b.BackgroundColor3=mix(pal().label,pal().side,.94); tw(b,{BackgroundTransparency=0}) end end)
+				b.MouseLeave:Connect(function() if not active then tw(b,{BackgroundTransparency=1}) end end)
+				b.Activated:Connect(function() activeTab=tb.id; activeSub=tb.subs[1].id; drawerOpen=false; playSound("click"); renderAll(); layout() end)
+			end
+		end
+	end
+end
+function renderHeader()
+	local tb=findTab(activeTab)
+	crumb.Text=lab(tb.label)
+	clearGui(crumbIco)
+	icon(tb.icon,crumbIco,15,"accent2")
+	clearGui(subtabs)
+	local i=0
+	for _,s in ipairs(tb.subs) do
+		i+=1
+		local active=s.id==activeSub
+		local w=utf8len(lab(s.label))*7+20
+		local b=new("TextButton",{Size=UDim2.fromOffset(w,26),Text=lab(s.label),TextSize=11.5,Font=Enum.Font.GothamBold,AutoButtonColor=false,LayoutOrder=i,BackgroundTransparency=active and 0 or 1},subtabs); corner(b,6)
+		if active then b.BackgroundColor3=accent(); table.insert(tints,{o=b,p="BackgroundColor3",m="accent"}); tint(new("UIGradient",{Rotation=20},b),"Color","gradAccent") end
+		tint(b,"TextColor3",active and "white" or "muted")
+		b.MouseEnter:Connect(function() if not active then b.BackgroundColor3=mix(pal().label,pal().side,.92); tw(b,{BackgroundTransparency=0}) end end)
+		b.MouseLeave:Connect(function() if not active then tw(b,{BackgroundTransparency=1}) end end)
+		b.Activated:Connect(function() activeSub=s.id; playSound("click"); renderHeader(); renderContent() end)
+	end
+	saveLabel.Text=t("save"); pillLabel.Text=t("openMenu"); dirtyDot.Visible=dirty
+end
+function renderContent()
+	closePop()
+	clearGui(col1); clearGui(col2)
+	local tb=findTab(activeTab)
+	local cards=tb.cards[activeSub] or {}
+	for i,card in ipairs(cards) do
+		local parent=singleCol and col1 or (i%2==1 and col1 or col2)
+		local g=makeGroup({Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1,GroupTransparency=state.animations and 1 or 0,LayoutOrder=i},parent)
+		local c=new("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BorderSizePixel=0},g)
+		regRadius(corner(c,state.radius)); tint(c,"BackgroundColor3","card"); tint(stroke(c),"Color","line"); pad(c,12,12,12,12); list(c,nil,4)
+		local head=new("Frame",{Size=UDim2.new(1,0,0,28),BackgroundTransparency=1,LayoutOrder=0},c)
+		local ib=new("Frame",{Size=UDim2.fromOffset(27,27),BorderSizePixel=0},head); corner(ib,7); tint(ib,"BackgroundColor3","soft"); tint(stroke(ib),"Color","line")
+		local hh=icon(card.icon,ib,14,"accent2"); hh.AnchorPoint=Vector2.new(.5,.5); hh.Position=UDim2.fromScale(.5,.5)
+		local tl=new("TextLabel",{Position=UDim2.fromOffset(35,0),Size=UDim2.new(1,-105,1,0),BackgroundTransparency=1,Text=lab(card.title),TextSize=13,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},head); tint(tl,"TextColor3","white")
+		local cn=new("TextLabel",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,0,.5,0),Size=UDim2.fromOffset(70,20),BackgroundTransparency=1,Text=#card.rows.." "..t("params"),TextSize=10,Font=Enum.Font.GothamMedium,TextXAlignment=Enum.TextXAlignment.Right},head); tint(cn,"TextColor3","dim")
+		for _,row in ipairs(card.rows) do buildRow(c,row,false) end
+		local order=0
+		for _,ch in ipairs(c:GetChildren()) do if ch:IsA("GuiObject") then order+=1; ch.LayoutOrder=order end end
+		if state.animations then task.delay(i*.055,function() if g.Parent then fadeGroup(g,0,.3) end end) end
+	end
+	paint()
+end
+function renderAll() renderSidebar(); renderHeader(); renderContent(); renderProfile(); paint() end
+
+function updateShellDecor()
+	local d=state.shadowDepth/100
+	for _,s in ipairs(shadow) do s.f.BackgroundTransparency=1-(1-s.base)*d; s.f.Visible=d>.02 end
+	borderGlowFrame.Visible=state.borderGlow
+	borderGlowFrame:FindFirstChildOfClass("UIStroke").Transparency=state.glow and .35 or .75
+	shell.BackgroundTransparency=state.frosted and .1 or 0
+	scrim.Visible=state.frosted
+	tw(scrim,{BackgroundTransparency=state.frosted and .72 or 1},.3)
+	topLine.BackgroundTransparency=state.glow and 0 or .6
+end
+function updateSoundIcon()
+	clearGui(soundIco)
+	local h=icon(state.sound and "sound" or "mute",soundIco,15,state.sound and "accent2" or "dim")
+	h.AnchorPoint=Vector2.new(.5,.5); h.Position=UDim2.fromScale(.5,.5)
+end
+function applyLive(id)
+	if id=="accent" or id=="theme" or id=="glow" or id=="borderGlow" then paint(); updateShellDecor(); renderProfile()
+	elseif id=="radius" then applyRadius()
+	elseif id=="density" or id=="language" then renderAll(); updateSoundIcon()
+	elseif id=="compact" then renderSidebar(); layout()
+	elseif id=="uiScale" then layout()
+	elseif id=="shadowDepth" or id=="frosted" then updateShellDecor()
+	elseif id=="showProfile" or id=="name" or id=="status" then renderProfile()
+	elseif id=="notifPos" then updateToastPos()
+	elseif id=="sound" then updateSoundIcon()
+	elseif id=="aurora" or id=="grid" or id=="particles" or id=="particleCount" or id=="particleGlow" or id=="quality" or id=="driftSpeed" or id=="reduceMotion" or id=="fpsCap" or id=="pauseUnfocused" then sceneParams() end
+end
+
+function layout()
+	local v=camera and camera.ViewportSize or Vector2.new(1280,720)
+	local availW,availH=v.X-16,v.Y-16
+	SCALE=math.clamp(state.uiScale/100,.8,1.25)
+	W=math.floor(math.min(BASE_W,availW/SCALE))
+	H=math.floor(isMin and HEADER_H or math.min(BASE_H,availH/SCALE))
+	local mobile=W<760
+	local sideW=mobile and 200 or (state.compact and 64 or 200)
+	shell.Size=UDim2.fromOffset(W,H); shellScale.Scale=SCALE
+	window.Size=UDim2.fromOffset(W*SCALE,H*SCALE)
+	for _,s in ipairs(shadow) do s.f.Size=UDim2.fromOffset(W*SCALE+s.grow,H*SCALE+s.grow) end
+	borderGlowFrame.Size=UDim2.fromOffset(W*SCALE+6,H*SCALE+6)
+	local sw,sh=W*SCALE,H*SCALE
+	local ox=math.clamp(state.posX,8-v.X/2+sw/2,v.X/2-8-sw/2)
+	local oy=math.clamp(state.posY,8-v.Y/2+sh/2+18,v.Y/2-8-sh/2+18)
+	state.posX,state.posY=ox,oy
+	window.Position=UDim2.new(.5,ox,.5,oy)
+	sidebar.Size=UDim2.fromOffset(sideW,H)
+	sidebar.Position=UDim2.fromOffset(mobile and (drawerOpen and 0 or -sideW-12) or 0,0)
+	drawerScrim.Visible=mobile and drawerOpen and not isMin
+	mainFrame.Position=UDim2.fromOffset(mobile and 0 or sideW,0)
+	mainFrame.Size=UDim2.new(1,-(mobile and 0 or sideW),1,0)
+	hamburger.Visible=mobile and not isMin
+	crumb.Visible=not mobile and not isMin; crumbIco.Visible=not mobile and not isMin
+	subtabs.Visible=not isMin; content.Visible=not isMin
+	local mainW=W-(mobile and 0 or sideW)
+	local items={{o=dirtyDot,w=8},{o=soundBtn,w=30}}
+	if not mobile then table.insert(items,{o=randBtn,w=30}); table.insert(items,{o=exportBtn,w=30}); randBtn.Visible=true; exportBtn.Visible=true else randBtn.Visible=false; exportBtn.Visible=false end
+	table.insert(items,{o=saveBtn,w=mobile and 74 or 92}); table.insert(items,{o=minBtn,w=30}); table.insert(items,{o=closeBtn,w=30})
+	local x=0
+	for _,e in ipairs(items) do
+		e.o.Position=UDim2.fromOffset(x,e.o==dirtyDot and 12 or 0)
+		if e.o~=dirtyDot then e.o.Size=UDim2.fromOffset(e.w,32) end
+		x+=e.w+6
+	end
+	actions.Size=UDim2.fromOffset(math.max(1,x-6),32)
+	saveIco.Visible=not mobile
+	saveLabel.Position=UDim2.fromOffset(mobile and 10 or 30,0)
+	saveLabel.Size=UDim2.new(1,mobile and -16 or -36,1,0)
+	local subX=mobile and 48 or 176
+	subtabs.Position=UDim2.fromOffset(subX,12)
+	subtabs.Size=UDim2.fromOffset(math.max(60,mainW-subX-(x-6)-22),32)
+	local newSingle=W<700
+	if newSingle~=singleCol then singleCol=newSingle; renderContent() end
+	col1.Size=singleCol and UDim2.new(1,0,0,0) or UDim2.new(.5,-7,0,0)
+	col2.Visible=not singleCol
+	sceneParams()
+end
+local function setMin(v)
+	isMin=v; clearGui(minBtn)
+	local h=icon(v and "plus" or "minus",minBtn,15,"label"); h.AnchorPoint=Vector2.new(.5,.5); h.Position=UDim2.fromScale(.5,.5)
+	layout()
+end
+local function setHidden(v)
+	isHidden=v
+	if v then
+		tw(shell,{BackgroundTransparency=1},.18)
+		task.delay(.2,function() if isHidden then window.Visible=false end end)
+		restorePill.Visible=true; restorePill.Position=UDim2.new(.5,0,1,10)
+		tw(restorePill,{Position=UDim2.new(.5,0,1,-26)},.35)
+	else
+		window.Visible=true; updateShellDecor()
+		tw(restorePill,{Position=UDim2.new(.5,0,1,10)},.25)
+		task.delay(.26,function() if not isHidden then restorePill.Visible=false end end)
+		layout()
+	end
+end
+
+hamburger.Activated:Connect(function() drawerOpen=not drawerOpen; playSound("click"); layout() end)
+drawerScrim.Activated:Connect(function() drawerOpen=false; layout() end)
+soundBtn.Activated:Connect(function() setState("sound",not state.sound); playSound("click") end)
+randBtn.Activated:Connect(function() playSound("click"); actRandom() end)
+exportBtn.Activated:Connect(function() playSound("click"); actExport() end)
+saveBtn.Activated:Connect(function() persist(false) end)
+minBtn.Activated:Connect(function() playSound("click"); setMin(not isMin) end)
+closeBtn.Activated:Connect(function() playSound("click"); if state.closeAction=="minimize" then setMin(true) else setHidden(true) end end)
+restorePill.Activated:Connect(function() playSound("click"); setHidden(false) end)
+
+local dragging,dragStart,dragOrigin=false,nil,nil
+header.InputBegan:Connect(function(i)
+	if i.UserInputType~=Enum.UserInputType.MouseButton1 and i.UserInputType~=Enum.UserInputType.Touch then return end
+	if not state.drag or isMin then return end
+	local objs=(playerGui.GetGuiObjectsAtPosition and playerGui:GetGuiObjectsAtPosition(i.Position.X,i.Position.Y)) or {}
+	for _,o in ipairs(objs) do if o:IsA("TextButton") or o:IsA("TextBox") or o:IsA("ScrollingFrame") then return end end
+	dragging=true; dragStart=i.Position; dragOrigin=Vector2.new(state.posX,state.posY)
+end)
+UserInputService.InputChanged:Connect(function(i)
+	if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then
+		state.posX=dragOrigin.X+(i.Position.X-dragStart.X)
+		state.posY=dragOrigin.Y+(i.Position.Y-dragStart.Y)
+		layout()
+	end
+end)
+UserInputService.InputEnded:Connect(function(i)
+	if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+		if dragging and state.rememberPos then markDirty() end
+		dragging=false
+	end
+end)
+UserInputService.InputBegan:Connect(function(i,processed)
+	if i.KeyCode==Enum.KeyCode.Escape then closePop(); closeModal(); return end
+	if processed then return end
+	if UserInputService:GetFocusedTextBox() then return end
+	if i.KeyCode==Enum.KeyCode.M and state.hotkeys then setHidden(not isHidden)
+	elseif i.KeyCode==Enum.KeyCode.S and (UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)) and state.hotkeys then persist(false) end
+end)
+local function bindCamera()
+	camera=workspace.CurrentCamera
+	if camera then camera:GetPropertyChangedSignal("ViewportSize"):Connect(function() layout(); renderHeader() end) end
+end
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function() task.wait(); bindCamera(); layout() end)
+task.spawn(function()
+	while gui.Parent do
+		task.wait(.5)
+		for i=#liveInfo,1,-1 do local e=liveInfo[i]; if e.o.Parent==nil then table.remove(liveInfo,i) else e.o.Text=e.f() end end
+	end
+end)
+
+local okLoad,saved=pcall(function() return HttpService:JSONDecode(gui:GetAttribute
