@@ -1,7 +1,9 @@
 --[[
-	NEBULA v3 — compact, compile-safe
+	NEBULA v3 — compact + размеры панели (М / С / Б)
 	LocalScript → StarterPlayerScripts (свой плейс)
-	Без Luau-only синтаксиса: нет += / ..= / task / typeof / math.clamp / utf8 / CanvasGroup
+	Compile-safe: без += / ..= / task / typeof / math.clamp / utf8 / CanvasGroup
+	Новое: пресеты размера панели (маленький / средний / большой) в шапке и в настройках,
+	       исправлена свёрнутая полоска (профиль больше не наезжает на шапку).
 ]]
 
 local Players = game:GetService("Players")
@@ -29,8 +31,15 @@ local OK=Color3.fromRGB(34,197,94)
 local WARN=Color3.fromRGB(245,158,11)
 local ERR=Color3.fromRGB(239,68,68)
 
+local SIZES={
+	small={w=740,h=460,letter="М",label="Маленький"},
+	medium={w=920,h=580,letter="С",label="Средний"},
+	large={w=1080,h=680,letter="Б",label="Большой"},
+}
+local SIZE_ORDER={"small","medium","large"}
+
 local DEFAULTS={
-	accent="#3B82F6",theme="midnight",radius=8,density="normal",compact=false,
+	accent="#3B82F6",theme="midnight",radius=8,density="normal",compact=false,sizeMode="medium",
 	uiScale=100,shadowDepth=70,frosted=true,animations=true,glow=true,borderGlow=true,
 	name=player.Name,status="online",showProfile=true,
 	drag=true,hotkeys=true,closeAction="hide",rememberPos=true,autoSave=false,
@@ -144,7 +153,7 @@ end
 local borderGlow=new("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),BackgroundTransparency=1,ZIndex=2},window)
 corner(borderGlow,12)
 tint(stroke(borderGlow,2),"Color","accent")
-local shell=new("Frame",{Size=UDim2.fromOffset(1060,680),BorderSizePixel=0,ClipsDescendants=true,ZIndex=3},window)
+local shell=new("Frame",{Size=UDim2.fromOffset(920,580),BorderSizePixel=0,ClipsDescendants=true,ZIndex=3},window)
 tint(shell,"BackgroundColor3","main")
 regRadius(corner(shell,state.radius))
 tint(stroke(shell,1),"Color","line")
@@ -153,7 +162,7 @@ local topLine=new("Frame",{Size=UDim2.new(1,0,0,1),BorderSizePixel=0,ZIndex=9},s
 new("UIGradient",{Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(0.5,0),NumberSequenceKeypoint.new(1,1)})},topLine)
 tint(topLine,"BackgroundColor3","accent")
 
-local sidebar=new("Frame",{Size=UDim2.fromOffset(200,680),BorderSizePixel=0,ZIndex=6},shell)
+local sidebar=new("Frame",{Size=UDim2.fromOffset(200,580),BorderSizePixel=0,ZIndex=6},shell)
 tint(sidebar,"BackgroundColor3","side")
 local sideLine=new("Frame",{AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,0,0,0),Size=UDim2.new(0,1,1,0),BorderSizePixel=0},sidebar)
 tint(sideLine,"BackgroundColor3","line")
@@ -200,6 +209,8 @@ corner(hamburger,8)
 tint(hamburger,"BackgroundColor3","card")
 tint(hamburger,"TextColor3","label")
 tint(stroke(hamburger),"Color","line")
+local expandHit=new("TextButton",{Name="ExpandHit",Position=UDim2.fromOffset(10,11),Size=UDim2.fromOffset(200,34),BackgroundTransparency=1,Text="NEBULA v3  ·  развернуть",TextSize=12,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left,AutoButtonColor=false,Visible=false,ZIndex=5},header)
+tint(expandHit,"TextColor3","accent2")
 local crumb=new("TextLabel",{Position=UDim2.fromOffset(16,0),Size=UDim2.fromOffset(150,56),BackgroundTransparency=1,Text="",TextSize=13,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=3},header)
 tint(crumb,"TextColor3","white")
 local subtabs=new("ScrollingFrame",{Position=UDim2.fromOffset(176,12),Size=UDim2.new(1,-400,0,32),BorderSizePixel=0,ScrollBarThickness=2,ScrollingDirection=Enum.ScrollingDirection.X,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.X,ZIndex=3},header)
@@ -209,10 +220,29 @@ corner(subtabs,8)
 tint(stroke(subtabs),"Color","line")
 hlist(subtabs,3)
 pad(subtabs,3,3,3,3)
-local actions=new("Frame",{AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-10,0,12),Size=UDim2.fromOffset(180,32),BackgroundTransparency=1,ZIndex=5},header)
-local dirtyDot=new("Frame",{Size=UDim2.fromOffset(7,7),Position=UDim2.fromOffset(0,12),BorderSizePixel=0,Visible=false},actions)
+local actions=new("Frame",{AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-10,0,12),Size=UDim2.fromOffset(268,32),BackgroundTransparency=1,ZIndex=5},header)
+local dirtyDot=new("Frame",{Size=UDim2.fromOffset(8,7),Position=UDim2.fromOffset(0,12),BorderSizePixel=0,Visible=false},actions)
 pill(dirtyDot)
 tint(dirtyDot,"BackgroundColor3","warn")
+
+local sizeSeg=new("Frame",{Size=UDim2.fromOffset(86,32),BackgroundTransparency=1},actions)
+local sizeBtns={}
+for i,mode in ipairs(SIZE_ORDER) do
+	local b=new("TextButton",{Position=UDim2.fromOffset((i-1)*30,0),Size=UDim2.fromOffset(26,32),Text="",AutoButtonColor=false},sizeSeg)
+	corner(b,6)
+	tint(stroke(b),"Color","line")
+	local tl=new("TextLabel",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text=SIZES[mode].letter,TextSize=12,Font=Enum.Font.GothamBold},b)
+	local m=mode
+	table.insert(tints,{o=b,p="BackgroundColor3",m="input",dyn=function() return state.sizeMode==m and accent() or modeColor("input") end})
+	table.insert(tints,{o=tl,p="TextColor3",m="muted",dyn=function() return state.sizeMode==m and Color3.new(1,1,1) or modeColor("muted") end})
+	sizeBtns[mode]=b
+end
+local sizeCycle=new("TextButton",{Size=UDim2.fromOffset(30,32),Text="С",TextSize=12,Font=Enum.Font.GothamBold,AutoButtonColor=false,Visible=false},actions)
+corner(sizeCycle,6)
+tint(sizeCycle,"BackgroundColor3","input")
+tint(sizeCycle,"TextColor3","accent2")
+tint(stroke(sizeCycle),"Color","line")
+
 local saveBtn=new("TextButton",{Position=UDim2.fromOffset(14,0),Size=UDim2.fromOffset(86,32),Text="Save",TextSize=12,Font=Enum.Font.GothamBold,AutoButtonColor=false},actions)
 corner(saveBtn,7)
 tint(saveBtn,"BackgroundColor3","accent")
@@ -246,6 +276,11 @@ local toastBox=new("Frame",{Size=UDim2.fromOffset(330,0),AutomaticSize=Enum.Auto
 vlist(toastBox,9)
 local popLayer=new("Frame",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,ZIndex=100},gui)
 
+local function updateSizeLabel()
+	local s=SIZES[state.sizeMode] or SIZES.medium
+	sizeCycle.Text=s.letter
+end
+
 local activeTab="appearance"
 local activeSub="theme"
 local drawerOpen=false
@@ -254,10 +289,10 @@ local isHidden=false
 local singleCol=false
 local dirty=false
 local autoToken=0
-local W,H,SCALE=1060,680,1
+local W,H,SCALE=920,580,1
 local popNode,popScrim,modalNode=nil,nil,nil
 local activeSlider=nil
-local renderAll,renderContent,renderSidebar,renderHeader,renderProfile,layout,applyLive,setState,persist,toast,openPop,closePop,openModal,closeModal,buildRow,sliderControl
+local renderAll,renderContent,renderSidebar,renderHeader,renderProfile,layout,applyLive,setState,persist,toast,openPop,closePop,openModal,closeModal,buildRow,sliderControl,setMin,setHidden,updateShellDecor
 
 local function updateToastPos()
 	local p=state.notifPos
@@ -461,6 +496,23 @@ local function comboRow(parent,row,compact)
 		end)
 	end)
 end
+local function segmentsRow(parent,row)
+	local r=rowBase(parent,rowH()+28)
+	rowLabel(r,row.label,-10)
+	local wrap=new("Frame",{Position=UDim2.fromOffset(2,26),Size=UDim2.new(1,-4,0,30),BackgroundTransparency=1},r)
+	hlist(wrap,6)
+	local n=#row.options
+	for i,o in ipairs(row.options) do
+		local b=new("TextButton",{Size=UDim2.new(1/n,-4,1,0),Text="",AutoButtonColor=false,LayoutOrder=i},wrap)
+		corner(b,6)
+		tint(stroke(b),"Color","line")
+		local tl=new("TextLabel",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text=o.label,TextSize=11,Font=Enum.Font.GothamBold},b)
+		local mode=o.value
+		table.insert(tints,{o=b,p="BackgroundColor3",m="input",dyn=function() return state[row.id]==mode and accent() or modeColor("input") end})
+		table.insert(tints,{o=tl,p="TextColor3",m="muted",dyn=function() return state[row.id]==mode and Color3.new(1,1,1) or modeColor("muted") end})
+		b.Activated:Connect(function() setState(row.id,mode) end)
+	end
+end
 function sliderControl(parent,cfg)
 	local holder=new("Frame",{Size=UDim2.new(1,0,0,42),BackgroundTransparency=1},parent)
 	local top=new("Frame",{Size=UDim2.new(1,0,0,18),BackgroundTransparency=1},holder)
@@ -622,6 +674,7 @@ function buildRow(parent,row,compact)
 	local ty=row.type
 	if ty=="toggle" then toggleRow(parent,row)
 	elseif ty=="combo" then comboRow(parent,row,compact)
+	elseif ty=="segments" then segmentsRow(parent,row)
 	elseif ty=="slider" then sliderRow(parent,row)
 	elseif ty=="text" then textRow(parent,row)
 	elseif ty=="swatch" then swatchRow(parent,row)
@@ -641,6 +694,7 @@ local function actReset(b)
 		applyRadius()
 		updateShellDecor()
 		updateToastPos()
+		updateSizeLabel()
 		layout()
 		markDirty()
 		toast("warning","Настройки сброшены","Восстановлены значения по умолчанию.")
@@ -714,6 +768,7 @@ local function actImport()
 				applyRadius()
 				updateShellDecor()
 				updateToastPos()
+				updateSizeLabel()
 				layout()
 				markDirty()
 				closeModal()
@@ -731,7 +786,8 @@ end
 local function actDocs()
 	openModal("Документация",{
 		"NEBULA v3 — интерфейс настроек. Все тумблеры, списки, ползунки и цвет применяются мгновенно.",
-		"Перетаскивайте окно за верхнюю панель мышью или пальцем. Крестик скрывает окно — вернуть можно кнопкой «Открыть меню». На телефоне сайдбар выезжает по ≡.",
+		"Размер панели: кнопки М / С / Б в шапке (на телефоне одна кнопка-переключатель) или строка «Размер панели» в разделе Внешний вид → Окно.",
+		"Перетаскивайте окно за верхнюю панель мышью или пальцем. Кнопка «–» сворачивает в полоску — нажать на полоску или «+» развернёт обратно. Крестик скрывает окно — вернуть можно кнопкой «Открыть меню».",
 		"Горячие клавиши: M — показать/скрыть · Ctrl+S — сохранить · Esc — закрыть всплывающее окно",
 	})
 end
@@ -742,6 +798,7 @@ local function R(ty,id,label,extra)
 	return r
 end
 local function C(title,rows) return {title=title,rows=rows} end
+local SIZE_OPTS={{value="small",label="Маленький"},{value="medium",label="Средний"},{value="large",label="Большой"}}
 local SCHEMA={
 	{id="appearance",group="Основное",icon="🎨",label="Внешний вид",
 		subs={{id="theme",label="Тема"},{id="window",label="Окно"}},
@@ -751,7 +808,8 @@ local SCHEMA={
 				C("Оформление",{R("combo","theme","Тема окна",{options={{value="midnight",label="Полуночная"},{value="abyss",label="Глубокая"},{value="contrast",label="Контрастная"}}}),R("slider","radius","Скругление углов",{min=0,max=16,step=1,unit=" px"}),R("combo","density","Плотность строк",{options={{value="compact",label="Компактная"},{value="normal",label="Обычная"},{value="roomy",label="Просторная"}}}),R("toggle","compact","Компактный сайдбар")})
 			},
 			window={
-				C("Окно",{R("slider","uiScale","Масштаб интерфейса",{min=80,max=125,step=5,unit="%"}),R("slider","shadowDepth","Глубина тени",{min=0,max=100,step=5,unit="%"}),R("toggle","frosted","Матовое стекло"),R("toggle","animations","Анимации интерфейса")}),
+				C("Размер панели",{R("segments","sizeMode","Пресет размера",{options=SIZE_OPTS}),R("slider","uiScale","Масштаб интерфейса",{min=80,max=125,step=5,unit="%"}),R("info",nil,"Текущий размер",{value=""}),R("button",nil,"Свернуть в полоску",{fn=function() setMin(true) end})}),
+				C("Окно",{R("slider","shadowDepth","Глубина тени",{min=0,max=100,step=5,unit="%"}),R("toggle","frosted","Матовое стекло"),R("toggle","animations","Анимации интерфейса")}),
 				C("Профиль",{R("text","name","Отображаемое имя"),R("combo","status","Статус",{options={{value="online",label="В сети"},{value="away",label="Отошёл"},{value="dnd",label="Не беспокоить"},{value="invisible",label="Невидимка"}}}),R("toggle","showProfile","Блок профиля")})
 			}
 		}},
@@ -779,7 +837,7 @@ local SCHEMA={
 		subs={{id="info",label="Информация"}},
 		cards={
 			info={
-				C("NEBULA UI",{R("info",nil,"Версия",{value="v3.0.2 compact"}),R("info",nil,"Движок",{value="Roblox Lua/Luau"}),R("button",nil,"Документация",{style="primary",fn=actDocs})}),
+				C("NEBULA UI",{R("info",nil,"Версия",{value="v3.1 compact"}),R("info",nil,"Движок",{value="Roblox Lua/Luau"}),R("button",nil,"Документация",{style="primary",fn=actDocs})}),
 				C("Лицензия",{R("info",nil,"Лицензия",{value="MIT · демо"}),R("info",nil,"Стиль",{value="Тёмный неоновый концепт"})})
 			}
 		}},
@@ -893,7 +951,13 @@ function renderContent()
 		tint(tl,"TextColor3","white")
 		local cn=new("TextLabel",{AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,0,0.5,0),Size=UDim2.fromOffset(70,20),BackgroundTransparency=1,Text=#card.rows.." парам.",TextSize=10,Font=Enum.Font.Gotham,TextXAlignment=Enum.TextXAlignment.Right},head)
 		tint(cn,"TextColor3","dim")
-		for _,row in ipairs(card.rows) do buildRow(c,row,false) end
+		for _,row in ipairs(card.rows) do
+			if row.label=="Текущий размер" then
+				local s=SIZES[state.sizeMode] or SIZES.medium
+				row.value=s.label.." · "..s.w.."×"..s.h
+			end
+			buildRow(c,row,false)
+		end
 		local order=0
 		for _,ch in ipairs(c:GetChildren()) do if ch:IsA("GuiObject") then order=order+1; ch.LayoutOrder=order end end
 	end
@@ -913,12 +977,12 @@ function updateShellDecor()
 		s.f.BackgroundTransparency=1-(1-s.base)*d
 		s.f.Visible=d>0.02
 	end
-	borderGlow.Visible=state.borderGlow
+	borderGlow.Visible=state.borderGlow and not isMin
 	local st=borderGlow:FindFirstChildOfClass("UIStroke")
 	if st then st.Transparency=state.glow and 0.35 or 0.75 end
 	shell.BackgroundTransparency=state.frosted and 0.1 or 0
-	scrim.Visible=state.frosted
-	tw(scrim,{BackgroundTransparency=state.frosted and 0.72 or 1},0.3)
+	scrim.Visible=state.frosted and not isMin
+	tw(scrim,{BackgroundTransparency=(state.frosted and not isMin) and 0.72 or 1},0.3)
 	topLine.BackgroundTransparency=state.glow and 0 or 0.6
 end
 function applyLive(id)
@@ -926,6 +990,11 @@ function applyLive(id)
 		paint()
 		updateShellDecor()
 		renderProfile()
+	elseif id=="sizeMode" then
+		updateSizeLabel()
+		paint()
+		if isMin then setMin(false) else layout() end
+		if activeTab=="appearance" and activeSub=="window" then renderContent() end
 	elseif id=="radius" then
 		applyRadius()
 	elseif id=="density" then
@@ -949,10 +1018,16 @@ function layout()
 	local availW=v.X-16
 	local availH=v.Y-80
 	SCALE=clamp(state.uiScale/100,0.8,1.25)
-	W=math.floor(math.min(1060,availW/SCALE))
-	H=math.floor(isMin and 56 or math.min(680,availH/SCALE))
-	local mobile=W<760
-	local sideW=mobile and 200 or (state.compact and 64 or 200)
+	local base=SIZES[state.sizeMode] or SIZES.medium
+	if isMin then
+		W=math.floor(math.min(520,availW/SCALE))
+		H=56
+	else
+		W=math.floor(math.min(base.w,availW/SCALE))
+		H=math.floor(math.min(base.h,availH/SCALE))
+	end
+	local narrow=W<760
+	local sideW=narrow and 200 or (state.compact and 64 or 200)
 	shell.Size=UDim2.fromOffset(W,H)
 	shellScale.Scale=SCALE
 	window.Size=UDim2.fromOffset(W*SCALE,H*SCALE)
@@ -963,46 +1038,67 @@ function layout()
 	local oy=clamp(state.posY,8-v.Y/2+sh/2,v.Y/2-8-sh/2)
 	state.posX,state.posY=ox,oy
 	window.Position=UDim2.new(0.5,ox,0.5,oy)
+
+	sidebar.Visible=not isMin
 	sidebar.Size=UDim2.fromOffset(sideW,H)
-	sidebar.Position=UDim2.fromOffset(mobile and (drawerOpen and 0 or -sideW-12) or 0,0)
-	drawerScrim.Visible=mobile and drawerOpen and not isMin
-	mainFrame.Position=UDim2.fromOffset(mobile and 0 or sideW,0)
-	mainFrame.Size=UDim2.new(1,-(mobile and 0 or sideW),1,0)
-	hamburger.Visible=mobile and not isMin
-	crumb.Visible=not mobile and not isMin
+	sidebar.Position=UDim2.fromOffset(narrow and (drawerOpen and 0 or -sideW-12) or 0,0)
+	drawerScrim.Visible=narrow and drawerOpen and not isMin
+	mainFrame.Position=UDim2.fromOffset((narrow or isMin) and 0 or sideW,0)
+	mainFrame.Size=UDim2.new(1,-((narrow or isMin) and 0 or sideW),1,0)
+	hamburger.Visible=narrow and not isMin
+	expandHit.Visible=isMin
 	subtabs.Visible=not isMin
 	content.Visible=not isMin
-	local mainW=W-(mobile and 0 or sideW)
-	local actionsW=mobile and 150 or 180
-	actions.Size=UDim2.fromOffset(actionsW,32)
-	if mobile then
-		saveBtn.Position=UDim2.fromOffset(14,0)
-		saveBtn.Size=UDim2.fromOffset(60,32)
-		minBtn.Position=UDim2.fromOffset(80,0)
-		closeBtn.Position=UDim2.fromOffset(116,0)
+
+	local items={}
+	table.insert(items,{o=dirtyDot,w=8,h=7,y=12})
+	if narrow then
+		table.insert(items,{o=sizeCycle,w=30,h=32,y=0})
 	else
-		saveBtn.Position=UDim2.fromOffset(14,0)
-		saveBtn.Size=UDim2.fromOffset(86,32)
-		minBtn.Position=UDim2.fromOffset(106,0)
-		closeBtn.Position=UDim2.fromOffset(142,0)
+		table.insert(items,{o=sizeSeg,w=86,h=32,y=0})
 	end
-	local subX=mobile and 48 or 176
-	subtabs.Position=UDim2.fromOffset(subX,12)
-	subtabs.Size=UDim2.fromOffset(math.max(60,mainW-subX-actionsW-22),32)
-	local newSingle=W<700
+	table.insert(items,{o=saveBtn,w=narrow and 60 or 86,h=32,y=0})
+	table.insert(items,{o=minBtn,w=32,h=32,y=0})
+	table.insert(items,{o=closeBtn,w=32,h=32,y=0})
+	local x=0
+	for _,e in ipairs(items) do
+		e.o.Position=UDim2.fromOffset(x,e.y)
+		e.o.Size=UDim2.fromOffset(e.w,e.h)
+		x=x+e.w+6
+	end
+	local actionsW=math.max(1,x-6)
+	actions.Size=UDim2.fromOffset(actionsW,32)
+	sizeSeg.Visible=not narrow
+	sizeCycle.Visible=narrow
+
+	local mainW=W-((narrow or isMin) and 0 or sideW)
+	if isMin then
+		crumb.Visible=false
+		expandHit.Size=UDim2.fromOffset(math.max(80,mainW-actionsW-24),34)
+	else
+		local showCrumb=(not narrow) and W>=880
+		crumb.Visible=showCrumb
+		local subX=narrow and 48 or (showCrumb and 176 or 16)
+		subtabs.Position=UDim2.fromOffset(subX,12)
+		subtabs.Size=UDim2.fromOffset(math.max(60,mainW-subX-actionsW-22),32)
+	end
+
+	local newSingle=(mainW-32)<620
 	if newSingle~=singleCol then
 		singleCol=newSingle
 		renderContent()
 	end
 	col1.Size=singleCol and UDim2.new(1,0,0,0) or UDim2.new(0.5,-7,0,0)
 	col2.Visible=not singleCol
+	updateShellDecor()
 end
-local function setMin(v)
+function setMin(v)
 	isMin=v
 	minBtn.Text=v and "+" or "–"
+	if v then drawerOpen=false end
 	layout()
 end
-local function setHidden(v)
+function setHidden(v)
 	isHidden=v
 	if v then
 		tw(shell,{BackgroundTransparency=1},0.18)
@@ -1023,17 +1119,29 @@ hamburger.Activated:Connect(function() drawerOpen=not drawerOpen; layout() end)
 drawerScrim.Activated:Connect(function() drawerOpen=false; layout() end)
 saveBtn.Activated:Connect(function() persist(false) end)
 minBtn.Activated:Connect(function() setMin(not isMin) end)
+expandHit.Activated:Connect(function() setMin(false) end)
 closeBtn.Activated:Connect(function() if state.closeAction=="minimize" then setMin(true) else setHidden(true) end end)
 restorePill.Activated:Connect(function() setHidden(false) end)
+for mode,b in pairs(sizeBtns) do
+	local m=mode
+	b.Activated:Connect(function() setState("sizeMode",m) end)
+end
+sizeCycle.Activated:Connect(function()
+	local idx=1
+	for i,m in ipairs(SIZE_ORDER) do if m==state.sizeMode then idx=i end end
+	local nxt=SIZE_ORDER[idx+1] or SIZE_ORDER[1]
+	setState("sizeMode",nxt)
+	toast("info","Размер панели",(SIZES[nxt] or SIZES.medium).label)
+end)
 
 local dragging,dragStart,dragOrigin=false,nil,nil
 header.InputBegan:Connect(function(i)
 	if i.UserInputType~=Enum.UserInputType.MouseButton1 and i.UserInputType~=Enum.UserInputType.Touch then return end
-	if not state.drag or isMin then return end
+	if not state.drag then return end
 	local objs={}
 	if pg.GetGuiObjectsAtPosition then objs=pg:GetGuiObjectsAtPosition(i.Position.X,i.Position.Y) end
 	for _,o in ipairs(objs) do
-		if o:IsA("TextButton") or o:IsA("TextBox") or o:IsA("ScrollingFrame") then return end
+		if (o:IsA("TextButton") or o:IsA("TextBox") or o:IsA("ScrollingFrame")) and o.Name~="ExpandHit" then return end
 	end
 	dragging=true
 	dragStart=i.Position
@@ -1083,9 +1191,10 @@ if okLoad and type(saved)=="table" then
 		if saved[k]~=nil and type(saved[k])==type(v) then state[k]=saved[k] end
 	end
 end
+if not SIZES[state.sizeMode] then state.sizeMode="medium" end
 if not state.rememberPos then state.posX,state.posY=0,0 end
 updateToastPos()
-updateShellDecor()
+updateSizeLabel()
 renderAll()
 bindCamera()
 layout()
@@ -1095,4 +1204,4 @@ shellScale.Scale=SCALE*0.93
 shell.Position=UDim2.fromOffset(0,16)
 tw(shellScale,{Scale=SCALE},0.45)
 tw(shell,{Position=UDim2.fromOffset(0,0)},0.45)
-delay(0.6,function() toast("info","NEBULA v3","Меню загружено. M — скрыть/показать, ≡ — сайдбар на телефоне.") end)
+delay(0.6,function() toast("info","NEBULA v3","Размер панели: М / С / Б в шапке. «–» сворачивает, клик по полоске разворачивает.") end)
