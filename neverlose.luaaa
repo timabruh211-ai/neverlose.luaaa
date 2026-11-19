@@ -1,7 +1,8 @@
 --[[
-	GLASS HUB v2 — Graphite Edition (чистый Luau, без внешних картинок)
+	GLASS HUB v2.1 — Graphite Edition (чистый Luau, без внешних картинок)
+	ИСПРАВЛЕНО: порядок объявления accentRefs (краш regAccent), preview, аватар.
 	RightShift — открыть/закрыть. Телефон: плавающая кнопка + drag пальцем.
-	ESP / чамсы / скелет / аимбот работают на ЛОКАЛЬНЫХ тест-ботах (вкладка "Боты").
+	ESP / чамсы / скелет / аимбот работают на ЛОКАЛЬНЫХ тест-ботах.
 	Свой код вставляй в колбэки, помеченные "ВСТАВЬ СВОЙ КОД".
 ]]
 
@@ -33,6 +34,7 @@ local ESPColors = {
 	name = Color3.fromRGB(242, 243, 245), fov = Color3.fromRGB(209, 213, 219),
 }
 local espPaint = {box = {}, chams = {}, skeleton = {}, head = {}, name = {}, fov = {}}
+local accentRefs = {}
 local lang = "ru"
 local isOpen = true
 local baseScale, userScale = 1, 0
@@ -78,7 +80,6 @@ local function tw(obj, props, t, style)
 	return tween
 end
 local function regAccent(o, p, g) table.insert(accentRefs, {o = o, p = p, g = g}) end
-local accentRefs = {}
 local function accentSeq() return ColorSequence.new({ColorSequenceKeypoint.new(0, ACCENT), ColorSequenceKeypoint.new(1, ACCENT:Lerp(Color3.new(0, 0, 0), 0.6))}) end
 local function setAccent(col)
 	ACCENT = col
@@ -90,7 +91,7 @@ local function paint(f)
 	for _, r in ipairs(espPaint[f]) do if r.o.Parent ~= nil then r.o[r.p] = ESPColors[f] end end
 end
 
---== СЛОВАРЬ (ИСПРАВЛЕНО: ru/en ключи) ==--
+--== СЛОВАРЬ RU / EN ==--
 local L = {
 	tagline = {ru = "графитовое стекло", en = "graphite glass"},
 	tabEsp = {ru = "ESP / Визуал", en = "ESP / Visuals"},
@@ -177,12 +178,18 @@ local function hookCamera()
 end
 connect(workspace:GetPropertyChangedSignal("CurrentCamera"), hookCamera)
 
---== GUI ==--
-local function killOld(p) if p then local o = p:FindFirstChild("GlassHubV2") if o then o:Destroy() end end end
+--== GUI + очистка старых копий ==--
+local function killOld(p, name)
+	if p then local o = p:FindFirstChild(name) if o then o:Destroy() end end
+end
 local okHui, hui = pcall(function() return gethui and gethui() end)
-if okHui and hui then killOld(hui) end
-pcall(function() killOld(game:GetService("CoreGui")) end)
-killOld(Player:FindFirstChildOfClass("PlayerGui"))
+local function cleanAll(p)
+	killOld(p, "GlassHubV2") killOld(p, "GlassHubUI")
+end
+if okHui and hui then cleanAll(hui) end
+pcall(function() cleanAll(game:GetService("CoreGui")) end)
+cleanAll(Player:FindFirstChildOfClass("PlayerGui"))
+pcall(function() local f = workspace:FindFirstChild("GlassTestBots") if f then f:Destroy() end end)
 local gui = new("ScreenGui", {Name = "GlassHubV2", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 999, ZIndexBehavior = Enum.ZIndexBehavior.Sibling})
 local parented = false
 if okHui and hui then gui.Parent = hui parented = true end
@@ -467,7 +474,8 @@ end
 local function dropdownCard(col, key, optKeys, defaultIdx, cb)
 	local c = card(col) local b = cardBody(c, 8)
 	local head = new("TextButton", {Parent = b, Size = UDim2.new(1, -24, 0, 36), BackgroundTransparency = 1, Text = "", AutoButtonColor = false})
-	titleLabel(head, key, -130)
+	local ht = new("TextLabel", {Parent = head, Size = UDim2.new(1, -130, 1, 0), BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 14, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd})
+	bindText(ht, key)
 	local val = new("TextLabel", {Parent = head, Position = UDim2.new(1, -22, 0, 0), AnchorPoint = Vector2.new(1, 0), Size = UDim2.fromOffset(100, 36), BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = ACCENT, TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd})
 	regAccent(val, "TextColor3")
 	local chev = new("Frame", {Parent = head, Position = UDim2.new(1, -2, 0.5, 0), AnchorPoint = Vector2.new(1, 0.5), Size = UDim2.fromOffset(14, 14), BackgroundTransparency = 1})
@@ -538,7 +546,7 @@ local function paletteCard(col, feature, key, withToggle)
 	return c
 end
 
---== ПОИСК: фильтрация карточек ==--
+--== ПОИСК ==--
 local function filterSearch()
 	local q = string.lower(search.Text)
 	for _, s in ipairs(searchables) do
@@ -547,14 +555,13 @@ local function filterSearch()
 end
 search:GetPropertyChangedSignal("Text"):Connect(filterSearch)
 
---== КВАДРАТНАЯ PREVIEW-ПАНЕЛЬ (всё рисуется Frame'ами) ==--
+--== КВАДРАТНАЯ PREVIEW-ПАНЕЛЬ ==--
 local previewFov
 local function makePreview(col)
 	local c = card(col)
-	new("UIAspectRatioConstraint", {Parent = c, AspectRatio = 1})
 	local b = cardBody(c, 6)
 	titleLabel(b, "previewTitle")
-	local scene = new("Frame", {Parent = b, Size = UDim2.new(1, -24, 1, -30), BackgroundColor3 = C.side, BackgroundTransparency = 0.35, BorderSizePixel = 0, ClipsDescendants = true})
+	local scene = new("Frame", {Parent = b, Size = UDim2.new(1, -24, 0, 247), BackgroundColor3 = C.side, BackgroundTransparency = 0.35, BorderSizePixel = 0, ClipsDescendants = true})
 	corner(scene, 4) stroke(scene, C.white, 0.9, 1)
 	local box = new("Frame", {Parent = scene, Position = UDim2.fromScale(0.5, 0.52), AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromScale(0.42, 0.66), BackgroundTransparency = 1})
 	regPaint("box", stroke(box, ESPColors.box, 0, 1.5), "Color")
@@ -571,7 +578,7 @@ local function makePreview(col)
 	limb(0.5, 0.62, 0.18, 65) limb(0.5, 0.62, 0.18, 115)
 	local nm = new("TextLabel", {Parent = scene, Position = UDim2.fromScale(0.5, 0.12), AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromScale(0.8, 0.08), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = ESPColors.name, Text = "TestBot_1", TextTruncate = Enum.TextTruncate.AtEnd})
 	regPaint("name", nm, "TextColor3")
-	previewFov = new("Frame", {Parent = scene, Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromScale(0.8, 0.8), BackgroundTransparency = 1})
+	previewFov = new("Frame", {Parent = scene, Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromScale(0.44, 0.44), BackgroundTransparency = 1})
 	corner(previewFov, 1000) regPaint("fov", stroke(previewFov, ESPColors.fov, 0.35, 1.5), "Color")
 	new("Frame", {Parent = scene, Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(10, 2), BackgroundColor3 = C.text, BorderSizePixel = 0})
 	new("Frame", {Parent = scene, Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(2, 10), BackgroundColor3 = C.text, BorderSizePixel = 0})
@@ -586,7 +593,7 @@ corner(fovCircle, 100000) regPaint("fov", stroke(fovCircle, ESPColors.fov, 0.3, 
 local fovDot = new("Frame", {Parent = espLayer, AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(4, 4), BackgroundColor3 = ESPColors.fov, BorderSizePixel = 0, ZIndex = 1})
 corner(fovDot, 2) regPaint("fov", fovDot, "BackgroundColor3")
 
---== ТЕСТ-БОТЫ (локальные манекены) ==--
+--== ТЕСТ-БОТЫ ==--
 local botsFolder = new("Folder", {Parent = workspace, Name = "GlassTestBots"})
 local function limbPart(m, name, size, cf)
 	return new("Part", {Name = name, Size = size, CFrame = cf, Anchored = true, CanCollide = false, Color = Color3.fromRGB(120, 124, 132), Material = Enum.Material.SmoothPlastic, Parent = m})
@@ -703,13 +710,15 @@ connect(RS.RenderStepped, function(dt)
 	end
 end)
 
---== ИГРОК: аватар с fallback + retry (ИСПРАВЛЕНО) ==--
+--== ИГРОК: аватар с fallback, который скрывается после загрузки ==--
 local pc = new("Frame", {Parent = sidebar, Size = UDim2.new(1, -24, 0, 64), Position = UDim2.new(0, 12, 1, -12), AnchorPoint = Vector2.new(0, 1), BackgroundColor3 = C.card, BackgroundTransparency = 0.2, BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 2})
 corner(pc, 6) stroke(pc, C.white, 0.87, 1) gloss(pc)
 local av = new("ImageLabel", {Parent = pc, Position = UDim2.new(0, 10, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), Size = UDim2.fromOffset(42, 42), BackgroundColor3 = C.track, BackgroundTransparency = 0.15, BorderSizePixel = 0, Image = ""})
 corner(av, 6) stroke(av, C.white, 0.85, 1)
-new("Frame", {Parent = av, Position = UDim2.fromOffset(15, 8), Size = UDim2.fromOffset(12, 12), BackgroundColor3 = C.sub, BorderSizePixel = 0, ZIndex = 0})
-new("Frame", {Parent = av, Position = UDim2.fromOffset(10, 24), Size = UDim2.fromOffset(22, 12), BackgroundColor3 = C.sub, BorderSizePixel = 0, ZIndex = 0})
+local avFallback = {}
+table.insert(avFallback, new("Frame", {Parent = av, Position = UDim2.fromOffset(15, 8), Size = UDim2.fromOffset(12, 12), BackgroundColor3 = C.sub, BorderSizePixel = 0}))
+table.insert(avFallback, new("Frame", {Parent = av, Position = UDim2.fromOffset(10, 24), Size = UDim2.fromOffset(22, 12), BackgroundColor3 = C.sub, BorderSizePixel = 0}))
+for _, f in ipairs(avFallback) do corner(f, 6) end
 new("TextLabel", {Parent = pc, Position = UDim2.fromOffset(62, 13), Size = UDim2.new(1, -74, 0, 17), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = C.text, Text = Player.DisplayName, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd})
 new("Frame", {Parent = pc, Position = UDim2.fromOffset(62, 38), Size = UDim2.fromOffset(6, 6), BackgroundColor3 = C.green, BorderSizePixel = 0})
 local onl = new("TextLabel", {Parent = pc, Position = UDim2.fromOffset(74, 33), Size = UDim2.new(1, -86, 0, 15), BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd})
@@ -719,7 +728,11 @@ task.spawn(function()
 		local ok, img = pcall(function()
 			return Players:GetUserThumbnailAsync(Player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
 		end)
-		if ok and img and img ~= "" then av.Image = img break end
+		if ok and img and img ~= "" then
+			av.Image = img
+			for _, f in ipairs(avFallback) do f.Visible = false end
+			break
+		end
 		task.wait(1.5)
 	end
 end)
